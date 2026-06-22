@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>LinuxDo Auto Browse</h1>
+
+    <div id="status-bar">
+      <span id="status-dot"></span>
+      <span id="status-text">就绪</span>
+    </div>
+
+    <div id="progress" class="hidden">
+      <div id="progress-text"></div>
+      <div id="progress-bar">
+        <div id="progress-fill"></div>
+      </div>
+    </div>
+
+    <div id="topic-info" class="hidden">
+      <div id="topic-title"></div>
+    </div>
+
+    <div class="speed-control">
+      <div class="speed-label">浏览速度: <span id="speed-text">慢速</span></div>
+      <div class="speed-slider-row">
+        <span class="speed-min-label">慢</span>
+        <input type="range" id="speed-slider" min="1" max="5" step="1" value="2">
+        <span class="speed-max-label">快</span>
+      </div>
+    </div>
+
+    <div class="buttons">
+      <button id="btn-start" class="btn btn-start">开始浏览</button>
+      <button id="btn-stop" class="btn btn-stop hidden">停止</button>
+      <button id="btn-view" class="btn btn-view hidden">查看标签</button>
+    </div>
+
+    <div id="error-msg" class="hidden"></div>
+
+    <div class="hint">
+      <p>先打开 linux.do，再点开始，标签会自动归组</p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

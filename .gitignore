@@ -1,0 +1,10 @@
+# Trellis workflow
+.trellis/
+
+# Claude Code
+.claude/
+.codex/
+.agents/
+
+# OS
+.DS_Store
