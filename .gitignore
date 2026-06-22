@@ -1,5 +1,10 @@
-# Trellis workflow
-.trellis/
+# Trellis workflow - ignore internal state only
+.trellis/.backup-*
+.trellis/worktrees/
+.trellis/.template-hashes.json
+.trellis/.runtime/
+.trellis/.cache/
+.trellis/workspace/
 
 # Claude Code
 .claude/
