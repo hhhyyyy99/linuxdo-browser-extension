@@ -649,6 +649,8 @@ async function autoScrollTopic(expectedUrl) {
   const speedCfg = SPEED_CONFIG[session.speedSetting] || SPEED_CONFIG[2];
   let lastScrollY = -1;
   let stuckCount = 0;
+  let bottomCount = 0;
+  let lastScrollHeight = 0;
   let deltaCarry = 0;
 
   while (session.isRunning) {
@@ -663,9 +665,26 @@ async function autoScrollTopic(expectedUrl) {
       )
     }));
 
-    if (metrics.scrollY + metrics.innerHeight >= metrics.scrollHeight - 2) {
-      return;
+    const atBottom = metrics.scrollY + metrics.innerHeight >= metrics.scrollHeight - 2;
+
+    if (atBottom) {
+      // At the bottom — Discourse may lazy-load more posts
+      if (metrics.scrollHeight > lastScrollHeight) {
+        // New content loaded, reset counters and keep going
+        bottomCount = 0;
+        stuckCount = 0;
+        lastScrollHeight = metrics.scrollHeight;
+      } else {
+        bottomCount += 1;
+        // Wait ~5 seconds at the bottom before giving up (allows lazy-load)
+        if (bottomCount > 80) return;
+      }
+      await interruptibleDelay(speedCfg.interval, speedCfg.interval);
+      continue;
     }
+
+    bottomCount = 0;
+    lastScrollHeight = metrics.scrollHeight;
 
     if (metrics.scrollY === lastScrollY) {
       stuckCount += 1;
