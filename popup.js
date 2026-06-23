@@ -1,3 +1,4 @@
+// ── DOM Elements ────────────────────────────────────────────
 const btnStart = document.getElementById('btn-start');
 const btnStop = document.getElementById('btn-stop');
 const btnView = document.getElementById('btn-view');
@@ -14,11 +15,35 @@ const postLimitInput = document.getElementById('post-limit');
 const limitText = document.getElementById('limit-text');
 const errorMsg = document.getElementById('error-msg');
 
+const agentBaseUrl = document.getElementById('agent-baseurl');
+const agentApiKey = document.getElementById('agent-apikey');
+const agentPreference = document.getElementById('agent-preference');
+const btnToggleKey = document.getElementById('btn-toggle-key');
+const btnSaveAgent = document.getElementById('btn-save-agent');
+const btnTestAgent = document.getElementById('btn-test-agent');
+const agentMsg = document.getElementById('agent-msg');
+
+const sessionList = document.getElementById('session-list');
+const summaryEmpty = document.getElementById('summary-empty');
+
 const SPEED_LABELS = { 1: '极慢', 2: '慢速', 3: '中速', 4: '快速', 5: '极快' };
 
 let browseTabId = null;
 let isStarting = false;
 
+// ── Tab Switching ───────────────────────────────────────────
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
+
+    if (tab.dataset.tab === 'summary') loadSessions();
+  });
+});
+
+// ── Speed & Limit ───────────────────────────────────────────
 function updateSpeedLabel(value) {
   speedText.textContent = SPEED_LABELS[value] || '慢速';
 }
@@ -27,6 +52,7 @@ function updateLimitLabel(value) {
   limitText.textContent = value > 0 ? String(value) : '∞';
 }
 
+// ── Status & Progress ───────────────────────────────────────
 function setStatus(text, state = '') {
   statusText.textContent = text;
   statusDot.className = state ? `running ${state}` : '';
@@ -80,6 +106,7 @@ function updateUI(running) {
   }
 }
 
+// ── Background Communication ────────────────────────────────
 function sendToBackground(msg, callback = () => {}) {
   chrome.runtime.sendMessage(msg, (resp) => {
     if (chrome.runtime.lastError) {
@@ -90,6 +117,7 @@ function sendToBackground(msg, callback = () => {}) {
   });
 }
 
+// ── Browse Status ───────────────────────────────────────────
 function applyBrowseStatus(status, data = {}) {
   switch (status) {
     case 'starting':
@@ -148,6 +176,7 @@ function applyBrowseStatus(status, data = {}) {
   }
 }
 
+// ── Browse Buttons ──────────────────────────────────────────
 btnStart.addEventListener('click', () => {
   hideError();
   isStarting = true;
@@ -191,6 +220,7 @@ btnView.addEventListener('click', () => {
   }
 });
 
+// ── Storage Listeners ───────────────────────────────────────
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.browseTabId) {
     browseTabId = changes.browseTabId.newValue;
@@ -203,8 +233,10 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
+// ── Init ────────────────────────────────────────────────────
 chrome.storage.local.get(
-  ['speedSetting', 'browseTabId', 'browseStatus', 'browseData', 'cdpIsRunning', 'postLimit'],
+  ['speedSetting', 'browseTabId', 'browseStatus', 'browseData', 'cdpIsRunning', 'postLimit',
+   'agentBaseUrl', 'agentApiKey', 'agentPreference'],
   (result) => {
     const savedSpeed = result.speedSetting || 2;
     speedSlider.value = savedSpeed;
@@ -213,6 +245,10 @@ chrome.storage.local.get(
     const savedLimit = Number(result.postLimit) || 0;
     postLimitInput.value = savedLimit > 0 ? savedLimit : '';
     updateLimitLabel(savedLimit);
+
+    agentBaseUrl.value = result.agentBaseUrl || '';
+    agentApiKey.value = result.agentApiKey || '';
+    agentPreference.value = result.agentPreference || '';
 
     browseTabId = result.browseTabId || null;
     updateUI(false);
@@ -239,6 +275,7 @@ chrome.storage.local.get(
   }
 );
 
+// ── Speed & Limit Listeners ─────────────────────────────────
 speedSlider.addEventListener('input', () => {
   const value = parseInt(speedSlider.value, 10);
   updateSpeedLabel(value);
@@ -269,3 +306,169 @@ postLimitInput.addEventListener('keydown', (e) => {
     postLimitInput.blur();
   }
 });
+
+// ── Agent Settings ──────────────────────────────────────────
+function showAgentMsg(text, type) {
+  agentMsg.textContent = text;
+  agentMsg.className = type;
+  agentMsg.classList.remove('hidden');
+  setTimeout(() => agentMsg.classList.add('hidden'), 3000);
+}
+
+btnToggleKey.addEventListener('click', () => {
+  agentApiKey.type = agentApiKey.type === 'password' ? 'text' : 'password';
+});
+
+btnSaveAgent.addEventListener('click', () => {
+  const config = {
+    agentBaseUrl: agentBaseUrl.value.trim(),
+    agentApiKey: agentApiKey.value.trim(),
+    agentPreference: agentPreference.value.trim()
+  };
+  chrome.storage.local.set(config, () => {
+    showAgentMsg('设置已保存', 'success');
+  });
+});
+
+btnTestAgent.addEventListener('click', () => {
+  showAgentMsg('测试中...', 'success');
+  sendToBackground({ type: 'test-agent' }, (resp) => {
+    if (!resp) {
+      showAgentMsg('通信失败', 'error');
+      return;
+    }
+    if (resp.error) {
+      showAgentMsg(`失败: ${resp.error}`, 'error');
+    } else {
+      showAgentMsg('连接成功!', 'success');
+    }
+  });
+});
+
+// ── Summary / Sessions ──────────────────────────────────────
+function formatDate(iso) {
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+    .replace(/<\/ul>\s*<ul>/g, '')
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/\n/g, '<br>')
+    .replace(/^(.+)$/gm, (match) => {
+      if (match.startsWith('<h') || match.startsWith('<ul') || match.startsWith('<li') || match.startsWith('<br') || match.startsWith('</')) return match;
+      return match;
+    });
+}
+
+function loadSessions() {
+  sendToBackground({ type: 'get-agent-sessions' }, (resp) => {
+    if (!resp) return;
+
+    const { sessions = [], current = null } = resp;
+    const allSessions = current ? [current, ...sessions.filter((s) => s.id !== current.id)] : sessions;
+
+    if (allSessions.length === 0 && (!current || current.topics.length === 0)) {
+      summaryEmpty.classList.remove('hidden');
+      sessionList.innerHTML = '';
+      return;
+    }
+
+    summaryEmpty.classList.add('hidden');
+    sessionList.innerHTML = allSessions.map((s) => renderSessionItem(s, s.id === current?.id)).join('');
+
+    // Bind events
+    sessionList.querySelectorAll('.session-header').forEach((header) => {
+      header.addEventListener('click', (e) => {
+        if (e.target.closest('.session-actions')) return;
+        const detail = header.nextElementSibling;
+        detail.classList.toggle('open');
+      });
+    });
+
+    sessionList.querySelectorAll('.btn-summary').forEach((btn) => {
+      btn.addEventListener('click', () => generateSummary(btn.dataset.id));
+    });
+
+    sessionList.querySelectorAll('.btn-delete').forEach((btn) => {
+      btn.addEventListener('click', () => deleteSession(btn.dataset.id));
+    });
+  });
+}
+
+function renderSessionItem(session, isCurrent) {
+  const time = formatDate(session.startTime);
+  const count = session.topics.length;
+  const label = isCurrent ? '(进行中)' : '';
+
+  const topicHtml = session.topics.map((t) =>
+    `<li><a href="${escapeHtml(t.href)}" target="_blank">${escapeHtml(t.title)}</a></li>`
+  ).join('');
+
+  const summaryHtml = session.summary
+    ? `<div class="session-summary">${renderMarkdown(session.summary)}</div>`
+    : '';
+
+  return `
+    <div class="session-item">
+      <div class="session-header">
+        <div class="session-meta">
+          <span class="session-time">${time} ${label}</span>
+          <span class="session-count">${count} 条</span>
+        </div>
+        <div class="session-actions">
+          ${!isCurrent && count > 0 ? `<button class="btn-sm btn-summary" data-id="${session.id}">总结</button>` : ''}
+          ${!isCurrent ? `<button class="btn-sm btn-delete" data-id="${session.id}">删除</button>` : ''}
+        </div>
+      </div>
+      <div class="session-detail">
+        ${count > 0 ? `<ul class="session-topics">${topicHtml}</ul>` : '<p style="color:#6c757d">暂无匹配话题</p>'}
+        ${summaryHtml}
+      </div>
+    </div>`;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function generateSummary(sessionId) {
+  const btn = sessionList.querySelector(`.btn-summary[data-id="${sessionId}"]`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '生成中...';
+  }
+
+  sendToBackground({ type: 'generate-summary', sessionId }, (resp) => {
+    if (!resp || resp.error) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '总结';
+      }
+      alert(resp?.error || '生成总结失败');
+      return;
+    }
+    loadSessions();
+  });
+}
+
+function deleteSession(sessionId) {
+  if (!confirm('确定删除这条记录？')) return;
+  sendToBackground({ type: 'delete-session', sessionId }, () => {
+    loadSessions();
+  });
+}

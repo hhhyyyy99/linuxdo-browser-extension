@@ -263,3 +263,276 @@ h1 {
 .hint a:hover {
   text-decoration: underline;
 }
+
+/* ── Tabs ─────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #2d3748;
+}
+
+.tab {
+  flex: 1;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #6c757d;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  color: #a0a0a0;
+}
+
+.tab.active {
+  color: #f8c291;
+  border-bottom-color: #f8c291;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* ── Agent Form ───────────────────────────── */
+
+.agent-form .form-group {
+  margin-bottom: 12px;
+}
+
+.agent-form label {
+  display: block;
+  font-size: 12px;
+  color: #a0a0a0;
+  margin-bottom: 4px;
+}
+
+.agent-form input[type="text"],
+.agent-form input[type="password"],
+.agent-form textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #2d3748;
+  border-radius: 4px;
+  background: #0f1629;
+  color: #e0e0e0;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+
+.agent-form input:focus,
+.agent-form textarea:focus {
+  border-color: #f8c291;
+}
+
+.agent-form textarea {
+  resize: vertical;
+}
+
+.apikey-row {
+  display: flex;
+  gap: 4px;
+}
+
+.apikey-row input {
+  flex: 1;
+}
+
+.btn-icon {
+  padding: 6px 8px;
+  background: #16213e;
+  border: 1px solid #2d3748;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+#agent-msg {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+#agent-msg.success {
+  background: #0d2818;
+  border: 1px solid #00b894;
+  color: #00b894;
+}
+
+#agent-msg.error {
+  background: #2d1b1b;
+  border: 1px solid #e74c3c;
+  color: #e74c3c;
+}
+
+/* ── Summary / Sessions ───────────────────── */
+
+#session-list {
+  max-height: 350px;
+  overflow-y: auto;
+}
+
+.session-item {
+  background: #16213e;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.session-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.session-header:hover {
+  background: #1c2a4a;
+}
+
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.session-time {
+  color: #a0a0a0;
+}
+
+.session-count {
+  color: #f8c291;
+  font-weight: 500;
+}
+
+.session-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-sm.btn-summary {
+  background: #3498db;
+  color: #fff;
+}
+
+.btn-sm.btn-summary:hover {
+  background: #2980b9;
+}
+
+.btn-sm.btn-delete {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.btn-sm.btn-delete:hover {
+  background: #c0392b;
+}
+
+.session-detail {
+  display: none;
+  padding: 0 12px 12px;
+  font-size: 12px;
+}
+
+.session-detail.open {
+  display: block;
+}
+
+.session-topics {
+  list-style: none;
+  margin-bottom: 8px;
+}
+
+.session-topics li {
+  padding: 4px 0;
+  border-bottom: 1px solid #0f1629;
+  color: #a0a0a0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-topics li a {
+  color: #a0a0a0;
+  text-decoration: none;
+}
+
+.session-topics li a:hover {
+  color: #f8c291;
+}
+
+.session-summary {
+  background: #0f1629;
+  border-radius: 4px;
+  padding: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #c0c0c0;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.session-summary h1,
+.session-summary h2,
+.session-summary h3 {
+  color: #f8c291;
+  font-size: 13px;
+  margin: 8px 0 4px;
+}
+
+.session-summary h1:first-child,
+.session-summary h2:first-child,
+.session-summary h3:first-child {
+  margin-top: 0;
+}
+
+.session-summary ul,
+.session-summary ol {
+  padding-left: 16px;
+  margin: 4px 0;
+}
+
+.session-summary li {
+  margin: 2px 0;
+}
+
+.session-summary strong {
+  color: #e0e0e0;
+}
+
+.session-summary a {
+  color: #3498db;
+  text-decoration: none;
+}
+
+.session-summary a:hover {
+  text-decoration: underline;
+}
+
+.session-summary p {
+  margin: 4px 0;
+}

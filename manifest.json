@@ -5,7 +5,7 @@
   "description": "自动浏览 LinuxDo 论坛帖子，模拟真人阅读行为",
   "minimum_chrome_version": "118",
   "permissions": ["storage", "tabs", "tabGroups", "debugger"],
-  "host_permissions": ["https://linux.do/*"],
+  "host_permissions": ["https://linux.do/*", "<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },

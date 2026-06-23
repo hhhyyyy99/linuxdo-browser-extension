@@ -8,49 +8,92 @@
   <div class="container">
     <h1>LinuxDo Auto Browse</h1>
 
-    <div id="status-bar">
-      <span id="status-dot"></span>
-      <span id="status-text">就绪</span>
+    <div class="tabs">
+      <button class="tab active" data-tab="browse">浏览</button>
+      <button class="tab" data-tab="agent">Agent</button>
+      <button class="tab" data-tab="summary">总结</button>
     </div>
 
-    <div id="progress" class="hidden">
-      <div id="progress-text"></div>
-      <div id="progress-bar">
-        <div id="progress-fill"></div>
+    <!-- Tab: 浏览 -->
+    <div class="tab-content active" id="tab-browse">
+      <div id="status-bar">
+        <span id="status-dot"></span>
+        <span id="status-text">就绪</span>
+      </div>
+
+      <div id="progress" class="hidden">
+        <div id="progress-text"></div>
+        <div id="progress-bar">
+          <div id="progress-fill"></div>
+        </div>
+      </div>
+
+      <div id="topic-info" class="hidden">
+        <div id="topic-title"></div>
+      </div>
+
+      <div class="settings-control">
+        <div class="settings-label">浏览速度: <span id="speed-text">慢速</span></div>
+        <div class="settings-slider-row">
+          <span class="settings-edge-label">慢</span>
+          <input type="range" id="speed-slider" min="1" max="5" step="1" value="2">
+          <span class="settings-edge-label">快</span>
+        </div>
+      </div>
+
+      <div class="settings-control">
+        <div class="settings-label">帖子数量: <span id="limit-text">∞</span></div>
+        <div class="settings-input-row">
+          <input type="number" id="post-limit" min="0" step="1" placeholder="无限" value="">
+          <span class="settings-hint">留空或0 = 无限</span>
+        </div>
+      </div>
+
+      <div class="buttons">
+        <button id="btn-start" class="btn btn-start">开始浏览</button>
+        <button id="btn-stop" class="btn btn-stop hidden">停止</button>
+        <button id="btn-view" class="btn btn-view hidden">查看标签</button>
+      </div>
+
+      <div id="error-msg" class="hidden"></div>
+
+      <div class="hint">
+        <p>先打开 linux.do，再点开始，标签会自动归组</p>
       </div>
     </div>
 
-    <div id="topic-info" class="hidden">
-      <div id="topic-title"></div>
-    </div>
-
-    <div class="settings-control">
-      <div class="settings-label">浏览速度: <span id="speed-text">慢速</span></div>
-      <div class="settings-slider-row">
-        <span class="settings-edge-label">慢</span>
-        <input type="range" id="speed-slider" min="1" max="5" step="1" value="2">
-        <span class="settings-edge-label">快</span>
+    <!-- Tab: Agent -->
+    <div class="tab-content" id="tab-agent">
+      <div class="agent-form">
+        <div class="form-group">
+          <label for="agent-baseurl">BaseURL</label>
+          <input type="text" id="agent-baseurl" placeholder="https://api.openai.com/v1">
+        </div>
+        <div class="form-group">
+          <label for="agent-apikey">API Key</label>
+          <div class="apikey-row">
+            <input type="password" id="agent-apikey" placeholder="sk-...">
+            <button id="btn-toggle-key" class="btn-icon" title="显示/隐藏">👁</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="agent-preference">偏好描述</label>
+          <textarea id="agent-preference" rows="3" placeholder="例：记录AI资讯、福利帖、技术分享等感兴趣的话题"></textarea>
+        </div>
+        <div class="buttons">
+          <button id="btn-save-agent" class="btn btn-start">保存设置</button>
+          <button id="btn-test-agent" class="btn btn-view">测试连接</button>
+        </div>
+        <div id="agent-msg" class="hidden"></div>
       </div>
     </div>
 
-    <div class="settings-control">
-      <div class="settings-label">帖子数量: <span id="limit-text">∞</span></div>
-      <div class="settings-input-row">
-        <input type="number" id="post-limit" min="0" step="1" placeholder="无限" value="">
-        <span class="settings-hint">留空或0 = 无限</span>
+    <!-- Tab: 总结 -->
+    <div class="tab-content" id="tab-summary">
+      <div id="summary-empty" class="hint">
+        <p>暂无记录，开始浏览后会自动记录匹配的话题</p>
       </div>
-    </div>
-
-    <div class="buttons">
-      <button id="btn-start" class="btn btn-start">开始浏览</button>
-      <button id="btn-stop" class="btn btn-stop hidden">停止</button>
-      <button id="btn-view" class="btn btn-view hidden">查看标签</button>
-    </div>
-
-    <div id="error-msg" class="hidden"></div>
-
-    <div class="hint">
-      <p>先打开 linux.do，再点开始，标签会自动归组</p>
+      <div id="session-list"></div>
     </div>
   </div>
 

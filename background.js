@@ -16,6 +16,9 @@ const SPEED_CONFIG = {
 
 const session = createEmptySession();
 let stoppingPromise = null;
+let currentAgentSession = null;
+
+const MAX_SESSIONS = 100;
 
 function createEmptySession() {
   return {
@@ -204,6 +207,10 @@ async function startBrowse() {
   session.currentTopicIndex = 0;
   session.noTopicRetries = 0;
 
+  // Create new agent session for topic recording
+  currentAgentSession = createAgentSession();
+  await saveCurrentSessionSnapshot();
+
   try {
     await storageSet({
       browseStatus: 'starting',
@@ -284,6 +291,117 @@ async function setPostLimit(postLimit) {
   return { status: 'ok' };
 }
 
+// ── Agent API ──────────────────────────────────────────────────
+
+async function getAgentConfig() {
+  const saved = await storageGet(['agentBaseUrl', 'agentApiKey', 'agentPreference']).catch(() => ({}));
+  return {
+    baseUrl: (saved.agentBaseUrl || '').replace(/\/+$/, ''),
+    apiKey: saved.agentApiKey || '',
+    preference: saved.agentPreference || ''
+  };
+}
+
+async function callAgent(messages) {
+  const config = await getAgentConfig();
+  if (!config.baseUrl || !config.apiKey) {
+    throw new Error('请先配置 Agent 的 BaseURL 和 API Key');
+  }
+
+  const resp = await fetch(`${config.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages,
+      temperature: 0.3
+    })
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`Agent API 错误 ${resp.status}: ${text.slice(0, 200)}`);
+  }
+
+  const data = await resp.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+async function filterTopic(title, href) {
+  const config = await getAgentConfig();
+  if (!config.baseUrl || !config.apiKey || !config.preference) return false;
+
+  try {
+    const result = await callAgent([
+      {
+        role: 'system',
+        content: `你是一个话题过滤器。用户偏好：${config.preference}\n判断给定话题是否匹配用户偏好。只回复 "yes" 或 "no"，不要回复其他内容。`
+      },
+      { role: 'user', content: `话题标题：${title}` }
+    ]);
+    return result.trim().toLowerCase().startsWith('yes');
+  } catch {
+    return false;
+  }
+}
+
+async function generateSummary(topics) {
+  const config = await getAgentConfig();
+  if (!config.baseUrl || !config.apiKey) {
+    throw new Error('请先配置 Agent 的 BaseURL 和 API Key');
+  }
+
+  const topicList = topics.map((t, i) => `${i + 1}. ${t.title}`).join('\n');
+  const result = await callAgent([
+    {
+      role: 'system',
+      content: `你是一个话题总结助手。用户偏好：${config.preference}\n请将以下话题按类别分类总结，使用 Markdown 格式。每个类别用二级标题，话题用列表项（加粗标题并附链接）。如果没有匹配偏好的话题，说明没有找到相关话题。`
+    },
+    {
+      role: 'user',
+      content: `以下是浏览过的话题列表：\n${topicList}\n\n请用以下 JSON 格式返回（不要有其他内容）：\n{"topics": [{"index": 1, "category": "类别名"}], "summary": "Markdown 格式的总结"}`
+    }
+  ]);
+
+  try {
+    const parsed = JSON.parse(result);
+    return parsed.summary || result;
+  } catch {
+    return result;
+  }
+}
+
+// ── Session Management ─────────────────────────────────────────
+
+function createAgentSession() {
+  return {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    startTime: new Date().toISOString(),
+    topics: [],
+    summary: ''
+  };
+}
+
+async function saveAgentSession(sessionToSave) {
+  const { agentSessions = [] } = await storageGet(['agentSessions']).catch(() => ({}));
+  agentSessions.unshift(sessionToSave);
+  // Keep only the latest MAX_SESSIONS
+  while (agentSessions.length > MAX_SESSIONS) agentSessions.pop();
+  await storageSet({ agentSessions });
+}
+
+async function saveCurrentSessionSnapshot() {
+  if (!currentAgentSession) return;
+  await storageSet({ currentAgentSnapshot: currentAgentSession });
+}
+
+async function clearCurrentSessionSnapshot() {
+  await storageSet({ currentAgentSnapshot: null });
+}
+
 async function focusBrowseTab() {
   const tabId = session.tabId || (await storageGet(['browseTabId']).catch(() => ({}))).browseTabId;
   if (!tabId) return { status: 'not-running' };
@@ -361,6 +479,14 @@ async function stopSession({ status = 'stopped', error = null, fromDetach = fals
 
     session.debuggerAttached = false;
     await ungroupBrowseTab(tabId);
+
+    // Save agent session if it has recorded topics
+    if (currentAgentSession && currentAgentSession.topics.length > 0) {
+      await saveAgentSession(currentAgentSession);
+    }
+    currentAgentSession = null;
+    await clearCurrentSessionSnapshot();
+
     await updateStatus(status, error ? { error } : {});
     resetSession();
   })().finally(() => {
@@ -429,6 +555,19 @@ async function browseCurrentListPage() {
   await browseTopic(topic, listInfo.topics.length);
   session.currentTopicIndex += 1;
   session.totalBrowsed += 1;
+
+  // Agent: filter and record topic
+  if (currentAgentSession) {
+    try {
+      const matched = await filterTopic(topic.title, topic.href);
+      if (matched) {
+        currentAgentSession.topics.push({ title: topic.title, href: topic.href });
+        await saveCurrentSessionSnapshot();
+      }
+    } catch {
+      // Agent filtering failed — silently skip, don't break browsing
+    }
+  }
 
   if (session.postLimit > 0 && session.totalBrowsed >= session.postLimit) {
     await stopSession({ status: 'complete' });
@@ -847,6 +986,49 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'set-post-limit') {
     return respond(sendResponse, setPostLimit(msg.postLimit));
+  }
+
+  if (msg.type === 'get-agent-sessions') {
+    return respond(sendResponse, (async () => {
+      const { agentSessions = [] } = await storageGet(['agentSessions']).catch(() => ({}));
+      const { currentAgentSnapshot = null } = await storageGet(['currentAgentSnapshot']).catch(() => ({}));
+      return { sessions: agentSessions, current: currentAgentSnapshot };
+    })());
+  }
+
+  if (msg.type === 'generate-summary') {
+    return respond(sendResponse, (async () => {
+      const { agentSessions = [] } = await storageGet(['agentSessions']).catch(() => ({}));
+      const target = agentSessions.find((s) => s.id === msg.sessionId);
+      if (!target) throw new Error('会话不存在');
+      if (target.topics.length === 0) throw new Error('该会话没有记录的话题');
+      const summary = await generateSummary(target.topics);
+      target.summary = summary;
+      await storageSet({ agentSessions });
+      return { summary };
+    })());
+  }
+
+  if (msg.type === 'delete-session') {
+    return respond(sendResponse, (async () => {
+      const { agentSessions = [] } = await storageGet(['agentSessions']).catch(() => ({}));
+      const filtered = agentSessions.filter((s) => s.id !== msg.sessionId);
+      await storageSet({ agentSessions: filtered });
+      return { status: 'ok' };
+    })());
+  }
+
+  if (msg.type === 'test-agent') {
+    return respond(sendResponse, (async () => {
+      try {
+        const result = await callAgent([
+          { role: 'user', content: '请回复"连接成功"四个字' }
+        ]);
+        return { status: 'ok', message: result };
+      } catch (err) {
+        return { error: err.message };
+      }
+    })());
   }
 });
 
