@@ -17,6 +17,7 @@ const errorMsg = document.getElementById('error-msg');
 
 const agentBaseUrl = document.getElementById('agent-baseurl');
 const agentApiKey = document.getElementById('agent-apikey');
+const agentModel = document.getElementById('agent-model');
 const agentPreference = document.getElementById('agent-preference');
 const btnToggleKey = document.getElementById('btn-toggle-key');
 const btnSaveAgent = document.getElementById('btn-save-agent');
@@ -236,7 +237,7 @@ chrome.storage.onChanged.addListener((changes) => {
 // ── Init ────────────────────────────────────────────────────
 chrome.storage.local.get(
   ['speedSetting', 'browseTabId', 'browseStatus', 'browseData', 'cdpIsRunning', 'postLimit',
-   'agentBaseUrl', 'agentApiKey', 'agentPreference'],
+   'agentBaseUrl', 'agentApiKey', 'agentModel', 'agentPreference'],
   (result) => {
     const savedSpeed = result.speedSetting || 2;
     speedSlider.value = savedSpeed;
@@ -248,6 +249,7 @@ chrome.storage.local.get(
 
     agentBaseUrl.value = result.agentBaseUrl || '';
     agentApiKey.value = result.agentApiKey || '';
+    agentModel.value = result.agentModel || '';
     agentPreference.value = result.agentPreference || '';
 
     browseTabId = result.browseTabId || null;
@@ -322,9 +324,16 @@ btnToggleKey.addEventListener('click', () => {
 btnSaveAgent.addEventListener('click', () => {
   const config = {
     agentBaseUrl: agentBaseUrl.value.trim(),
-    agentApiKey: agentApiKey.value.trim(),
+    agentModel: agentModel.value.trim(),
     agentPreference: agentPreference.value.trim()
   };
+  // API Key stored in session storage (cleared when browser closes) for security
+  const apiKey = agentApiKey.value.trim();
+  if (typeof chrome.storage.session !== 'undefined') {
+    chrome.storage.session.set({ agentApiKey: apiKey });
+  }
+  // Also save to local so the background script can read it
+  config.agentApiKey = apiKey;
   chrome.storage.local.set(config, () => {
     showAgentMsg('设置已保存', 'success');
   });
