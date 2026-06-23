@@ -421,6 +421,9 @@ async function fetchTopicListFromApi(page) {
 async function browseCurrentListPage() {
   ensureRunning();
 
+  // Navigate to list page to ensure correct page context for API call
+  await navigateTo(session.currentListUrl);
+
   let listInfo;
   try {
     listInfo = await fetchTopicListFromApi(session.currentPage);
