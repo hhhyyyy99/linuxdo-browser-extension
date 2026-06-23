@@ -101,32 +101,31 @@ h1 {
   text-overflow: ellipsis;
 }
 
-.speed-control {
+.settings-control {
   background: #16213e;
   border-radius: 6px;
   padding: 10px 12px;
   margin-bottom: 12px;
 }
 
-.speed-label {
+.settings-label {
   font-size: 12px;
   color: #a0a0a0;
   margin-bottom: 8px;
 }
 
-.speed-label span {
+.settings-label span {
   color: #f8c291;
   font-weight: 500;
 }
 
-.speed-slider-row {
+.settings-slider-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.speed-slider-row .speed-min-label,
-.speed-slider-row .speed-max-label {
+.settings-slider-row .settings-edge-label {
   font-size: 11px;
   color: #6c757d;
   flex-shrink: 0;
@@ -160,6 +159,36 @@ h1 {
   background: #f8c291;
   cursor: pointer;
   border: none;
+}
+
+.settings-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#post-limit {
+  width: 80px;
+  padding: 6px 8px;
+  border: 1px solid #2d3748;
+  border-radius: 4px;
+  background: #0f1629;
+  color: #e0e0e0;
+  font-size: 13px;
+  outline: none;
+}
+
+#post-limit:focus {
+  border-color: #f8c291;
+}
+
+#post-limit::placeholder {
+  color: #4a5568;
+}
+
+.settings-hint {
+  font-size: 11px;
+  color: #6c757d;
 }
 
 .buttons {

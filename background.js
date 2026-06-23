@@ -27,7 +27,9 @@ function createEmptySession() {
     currentListUrl: LINUXDO_LATEST_URL,
     currentTopicIndex: 0,
     noTopicRetries: 0,
-    speedSetting: 2
+    speedSetting: 2,
+    postLimit: 0,
+    totalBrowsed: 0
   };
 }
 
@@ -193,8 +195,10 @@ async function startBrowse() {
     await stoppingPromise;
   }
 
-  const saved = await storageGet(['speedSetting']).catch(() => ({}));
+  const saved = await storageGet(['speedSetting', 'postLimit']).catch(() => ({}));
   session.speedSetting = Number(saved.speedSetting) || 2;
+  session.postLimit = Number(saved.postLimit) || 0;
+  session.totalBrowsed = 0;
   session.stopRequested = false;
   session.currentListUrl = LINUXDO_LATEST_URL;
   session.currentTopicIndex = 0;
@@ -271,6 +275,12 @@ async function getBackgroundStatus() {
 async function setSpeed(speed) {
   session.speedSetting = Number(speed) || 2;
   await storageSet({ speedSetting: session.speedSetting });
+  return { status: 'ok' };
+}
+
+async function setPostLimit(postLimit) {
+  session.postLimit = Math.max(0, Number(postLimit) || 0);
+  await storageSet({ postLimit: session.postLimit });
   return { status: 'ok' };
 }
 
@@ -410,11 +420,20 @@ async function browseCurrentListPage() {
   await updateStatus('browsing', {
     total: listInfo.topics.length,
     current: session.currentTopicIndex,
-    title: topic.title
+    title: topic.title,
+    totalBrowsed: session.totalBrowsed,
+    postLimit: session.postLimit
   });
 
   await browseTopic(topic, listInfo.topics.length);
   session.currentTopicIndex += 1;
+  session.totalBrowsed += 1;
+
+  if (session.postLimit > 0 && session.totalBrowsed >= session.postLimit) {
+    await stopSession({ status: 'complete' });
+    return false;
+  }
+
   return true;
 }
 
@@ -425,7 +444,9 @@ async function browseTopic(topic, total) {
   await updateStatus('on-topic', {
     total,
     current: session.currentTopicIndex,
-    title: topic.title
+    title: topic.title,
+    totalBrowsed: session.totalBrowsed,
+    postLimit: session.postLimit
   });
 
   const ready = await waitForTopicContent(topic.href);
@@ -434,7 +455,9 @@ async function browseTopic(topic, total) {
       total,
       current: session.currentTopicIndex,
       title: topic.title,
-      error: '帖子内容加载超时，已跳过'
+      error: '帖子内容加载超时，已跳过',
+      totalBrowsed: session.totalBrowsed,
+      postLimit: session.postLimit
     });
     await interruptibleDelay(500, 1000);
     return;
@@ -750,6 +773,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'set-speed') {
     return respond(sendResponse, setSpeed(msg.speed));
+  }
+
+  if (msg.type === 'set-post-limit') {
+    return respond(sendResponse, setPostLimit(msg.postLimit));
   }
 });
 

@@ -10,6 +10,8 @@ const topicInfo = document.getElementById('topic-info');
 const topicTitle = document.getElementById('topic-title');
 const speedSlider = document.getElementById('speed-slider');
 const speedText = document.getElementById('speed-text');
+const postLimitInput = document.getElementById('post-limit');
+const limitText = document.getElementById('limit-text');
 const errorMsg = document.getElementById('error-msg');
 
 const SPEED_LABELS = { 1: '极慢', 2: '慢速', 3: '中速', 4: '快速', 5: '极快' };
@@ -19,6 +21,10 @@ let isStarting = false;
 
 function updateSpeedLabel(value) {
   speedText.textContent = SPEED_LABELS[value] || '慢速';
+}
+
+function updateLimitLabel(value) {
+  limitText.textContent = value > 0 ? String(value) : '∞';
 }
 
 function setStatus(text, state = '') {
@@ -31,12 +37,20 @@ function setStatus(text, state = '') {
 
 function showProgress(current, total, title) {
   const safeCurrent = Number(current) || 0;
-  const safeTotal = Math.max(Number(total) || 0, safeCurrent + 1, 1);
+  const isUnlimited = !total || total <= 0;
 
   progress.classList.remove('hidden');
   topicInfo.classList.remove('hidden');
-  progressText.textContent = `${safeCurrent + 1} / ${safeTotal}`;
-  progressFill.style.width = `${Math.min(100, ((safeCurrent + 1) / safeTotal) * 100)}%`;
+
+  if (isUnlimited) {
+    progressText.textContent = `${safeCurrent} / ∞`;
+    progressFill.style.width = '100%';
+  } else {
+    const safeTotal = Math.max(Number(total) || 0, safeCurrent + 1, 1);
+    progressText.textContent = `${safeCurrent} / ${safeTotal}`;
+    progressFill.style.width = `${Math.min(100, (safeCurrent / safeTotal) * 100)}%`;
+  }
+
   if (title) topicTitle.textContent = title;
 }
 
@@ -88,16 +102,20 @@ function applyBrowseStatus(status, data = {}) {
       break;
     case 'browsing':
       updateUI(true);
-      showProgress(data.current || 0, data.total || 0, data.title);
+      showProgress(data.totalBrowsed ?? data.current ?? 0, data.postLimit || data.total || 0, data.title);
       break;
     case 'on-topic':
       updateUI(true);
-      if (data.total) {
+      if (data.totalBrowsed !== undefined) {
+        const limit = data.postLimit || 0;
+        const label = limit > 0 ? `${data.totalBrowsed} / ${limit}` : `${data.totalBrowsed} / ∞`;
+        setStatus(`浏览帖子 ${label}`, 'running');
+      } else if (data.total) {
         setStatus(`浏览帖子 (${(data.current || 0) + 1}/${data.total})`, 'running');
       } else {
         setStatus('浏览帖子', 'running');
       }
-      showProgress(data.current || 0, data.total || 0, data.title);
+      showProgress(data.totalBrowsed ?? data.current ?? 0, data.postLimit || data.total || 0, data.title);
       break;
     case 'next-page':
       updateUI(true);
@@ -106,7 +124,7 @@ function applyBrowseStatus(status, data = {}) {
     case 'topic-error':
       updateUI(true);
       setStatus('跳过失败帖子', 'running');
-      showProgress(data.current || 0, data.total || 0, data.title);
+      showProgress(data.totalBrowsed ?? data.current ?? 0, data.postLimit || data.total || 0, data.title);
       if (data.error) showError(data.error);
       break;
     case 'complete':
@@ -186,11 +204,15 @@ chrome.storage.onChanged.addListener((changes) => {
 });
 
 chrome.storage.local.get(
-  ['speedSetting', 'browseTabId', 'browseStatus', 'browseData', 'cdpIsRunning'],
+  ['speedSetting', 'browseTabId', 'browseStatus', 'browseData', 'cdpIsRunning', 'postLimit'],
   (result) => {
     const savedSpeed = result.speedSetting || 2;
     speedSlider.value = savedSpeed;
     updateSpeedLabel(savedSpeed);
+
+    const savedLimit = Number(result.postLimit) || 0;
+    postLimitInput.value = savedLimit > 0 ? savedLimit : '';
+    updateLimitLabel(savedLimit);
 
     browseTabId = result.browseTabId || null;
     updateUI(false);
@@ -222,4 +244,28 @@ speedSlider.addEventListener('input', () => {
   updateSpeedLabel(value);
   chrome.storage.local.set({ speedSetting: value });
   sendToBackground({ type: 'set-speed', speed: value });
+});
+
+function savePostLimit() {
+  const raw = postLimitInput.value.trim();
+  const value = raw === '' ? 0 : Math.max(0, parseInt(raw, 10) || 0);
+  updateLimitLabel(value);
+  chrome.storage.local.set({ postLimit: value });
+  sendToBackground({ type: 'set-post-limit', postLimit: value });
+}
+
+postLimitInput.addEventListener('input', () => {
+  const raw = postLimitInput.value;
+  if (raw !== '' && !/^\d+$/.test(raw)) {
+    postLimitInput.value = raw.replace(/\D/g, '');
+  }
+});
+
+postLimitInput.addEventListener('change', savePostLimit);
+
+postLimitInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    savePostLimit();
+    postLimitInput.blur();
+  }
 });

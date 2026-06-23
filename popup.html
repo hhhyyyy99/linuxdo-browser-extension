@@ -24,12 +24,20 @@
       <div id="topic-title"></div>
     </div>
 
-    <div class="speed-control">
-      <div class="speed-label">浏览速度: <span id="speed-text">慢速</span></div>
-      <div class="speed-slider-row">
-        <span class="speed-min-label">慢</span>
+    <div class="settings-control">
+      <div class="settings-label">浏览速度: <span id="speed-text">慢速</span></div>
+      <div class="settings-slider-row">
+        <span class="settings-edge-label">慢</span>
         <input type="range" id="speed-slider" min="1" max="5" step="1" value="2">
-        <span class="speed-max-label">快</span>
+        <span class="settings-edge-label">快</span>
+      </div>
+    </div>
+
+    <div class="settings-control">
+      <div class="settings-label">帖子数量: <span id="limit-text">∞</span></div>
+      <div class="settings-input-row">
+        <input type="number" id="post-limit" min="0" step="1" placeholder="无限" value="">
+        <span class="settings-hint">留空或0 = 无限</span>
       </div>
     </div>
 
