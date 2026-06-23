@@ -640,29 +640,62 @@ async function autoScrollTopic(expectedUrl) {
   let deltaCarry = 0;
 
   while (session.isRunning) {
-    await ensureExpectedLocation(expectedUrl);
+    // Single CDP call: check URL + read scroll metrics + perform scroll
+    const speed = randomBetween(speedCfg.minSpeed, speedCfg.maxSpeed);
+    const jitter = (Math.random() - 0.5) * 0.5;
+    deltaCarry += Math.max(0.1, speed + jitter);
+    const deltaY = Math.floor(deltaCarry);
+    if (deltaY > 0) deltaCarry -= deltaY;
 
-    const metrics = await evaluateInPage(() => ({
-      scrollY: window.scrollY,
-      innerHeight: window.innerHeight,
-      scrollHeight: Math.max(
+    const doReverseScroll = Math.random() < 0.01;
+    const reverseAmount = doReverseScroll ? -(10 + Math.random() * 20) : 0;
+
+    const result = await evaluateInPage((scrollAmt, reverseAmt) => {
+      const href = location.href;
+      const scrollY = window.scrollY;
+      const innerHeight = window.innerHeight;
+      const scrollHeight = Math.max(
         document.body ? document.body.scrollHeight : 0,
         document.documentElement ? document.documentElement.scrollHeight : 0
-      )
-    }));
+      );
+      const atBottom = scrollY + innerHeight >= scrollHeight - 2;
 
-    const atBottom = metrics.scrollY + metrics.innerHeight >= metrics.scrollHeight - 2;
+      let newY = scrollY;
+      if (!atBottom && scrollAmt > 0) {
+        window.scrollBy(0, scrollAmt);
+        newY = window.scrollY;
+      }
+      if (reverseAmt !== 0 && !atBottom) {
+        window.scrollBy(0, reverseAmt);
+        newY = window.scrollY;
+      }
 
-    if (atBottom) {
-      // At the bottom — Discourse may lazy-load more posts
-      if (metrics.scrollHeight > lastScrollHeight) {
-        // New content loaded, reset counters and keep going
+      return { href, scrollY: newY, innerHeight, scrollHeight, atBottom };
+    }, deltaY, reverseAmount);
+
+    // Validate URL
+    if (isLoginLikeUrl(result.href)) {
+      throw new Error('请先登录 LinuxDo 后再启动自动浏览');
+    }
+    if (!isLinuxDoUrl(result.href)) {
+      throw new Error('自动化标签已离开 linux.do，已停止');
+    }
+    if (!samePageUrl(result.href, expectedUrl) && !isSameTopicPage(result.href, expectedUrl)) {
+      const expectedTopicId = getTopicId(expectedUrl);
+      if (expectedTopicId) {
+        throw new Error('自动化标签被手动导航到其他页面，已停止');
+      }
+      throw new Error('自动化标签被手动导航，已停止');
+    }
+
+    // Bottom detection with lazy-load wait
+    if (result.atBottom) {
+      if (result.scrollHeight > lastScrollHeight) {
         bottomCount = 0;
         stuckCount = 0;
-        lastScrollHeight = metrics.scrollHeight;
+        lastScrollHeight = result.scrollHeight;
       } else {
         bottomCount += 1;
-        // Wait ~5 seconds at the bottom before giving up (allows lazy-load)
         if (bottomCount > 80) return;
       }
       await interruptibleDelay(speedCfg.interval, speedCfg.interval);
@@ -670,30 +703,16 @@ async function autoScrollTopic(expectedUrl) {
     }
 
     bottomCount = 0;
-    lastScrollHeight = metrics.scrollHeight;
+    lastScrollHeight = result.scrollHeight;
 
-    if (metrics.scrollY === lastScrollY) {
+    // Stuck detection
+    if (result.scrollY === lastScrollY) {
       stuckCount += 1;
       if (stuckCount > 30) return;
     } else {
       stuckCount = 0;
     }
-    lastScrollY = metrics.scrollY;
-
-    const speed = randomBetween(speedCfg.minSpeed, speedCfg.maxSpeed);
-    const jitter = (Math.random() - 0.5) * 0.5;
-    deltaCarry += Math.max(0.1, speed + jitter);
-    const deltaY = Math.floor(deltaCarry);
-
-    if (deltaY > 0) {
-      deltaCarry -= deltaY;
-      await scrollPageBy(deltaY);
-    }
-
-    if (Math.random() < 0.01) {
-      await interruptibleDelay(100, 100);
-      await scrollPageBy(-(10 + Math.random() * 20));
-    }
+    lastScrollY = result.scrollY;
 
     await interruptibleDelay(speedCfg.interval, speedCfg.interval);
   }
