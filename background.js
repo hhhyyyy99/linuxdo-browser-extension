@@ -135,6 +135,25 @@ function samePageUrl(a, b) {
   }
 }
 
+function getLinuxDoPath(url) {
+  try {
+    return new URL(url).pathname.replace(/\/$/, '') || '/';
+  } catch {
+    return '';
+  }
+}
+
+function getTopicId(url) {
+  const match = getLinuxDoPath(url).match(/\/t\/(?:[^/]+\/)?(\d+)(?:\/\d+)?$/);
+  return match ? match[1] : null;
+}
+
+function isSameTopicPage(actualUrl, expectedUrl) {
+  const actualTopicId = getTopicId(actualUrl);
+  const expectedTopicId = getTopicId(expectedUrl);
+  return Boolean(actualTopicId && expectedTopicId && actualTopicId === expectedTopicId);
+}
+
 function isLoginLikeUrl(url) {
   try {
     const path = new URL(url).pathname;
@@ -569,7 +588,6 @@ async function autoScrollTopic(expectedUrl) {
     const metrics = await evaluateInPage(() => ({
       scrollY: window.scrollY,
       innerHeight: window.innerHeight,
-      innerWidth: window.innerWidth,
       scrollHeight: Math.max(
         document.body ? document.body.scrollHeight : 0,
         document.documentElement ? document.documentElement.scrollHeight : 0
@@ -595,12 +613,12 @@ async function autoScrollTopic(expectedUrl) {
 
     if (deltaY > 0) {
       deltaCarry -= deltaY;
-      await dispatchWheel(metrics, deltaY);
+      await scrollPageBy(deltaY);
     }
 
     if (Math.random() < 0.01) {
       await interruptibleDelay(100, 100);
-      await dispatchWheel(metrics, -(10 + Math.random() * 20));
+      await scrollPageBy(-(10 + Math.random() * 20));
     }
 
     await interruptibleDelay(speedCfg.interval, speedCfg.interval);
@@ -609,14 +627,11 @@ async function autoScrollTopic(expectedUrl) {
   throw new StopRequested();
 }
 
-async function dispatchWheel(metrics, deltaY) {
-  await sendCdpCommand('Input.dispatchMouseEvent', {
-    type: 'mouseWheel',
-    x: Math.max(1, Math.floor(metrics.innerWidth / 2)),
-    y: Math.max(1, Math.floor(metrics.innerHeight / 2)),
-    deltaX: 0,
-    deltaY
-  });
+async function scrollPageBy(deltaY) {
+  await evaluateInPage((amount) => {
+    window.scrollBy(0, amount);
+    return window.scrollY;
+  }, deltaY);
 }
 
 async function ensureExpectedLocation(expectedUrl) {
@@ -627,9 +642,20 @@ async function ensureExpectedLocation(expectedUrl) {
     throw new Error('请先登录 LinuxDo 后再启动自动浏览');
   }
 
-  if (!samePageUrl(actualUrl, expectedUrl)) {
-    throw new Error('自动化标签被手动导航，已停止');
+  if (!isLinuxDoUrl(actualUrl)) {
+    throw new Error('自动化标签已离开 linux.do，已停止');
   }
+
+  if (samePageUrl(actualUrl, expectedUrl) || isSameTopicPage(actualUrl, expectedUrl)) {
+    return;
+  }
+
+  const expectedTopicId = getTopicId(expectedUrl);
+  if (expectedTopicId) {
+    throw new Error('自动化标签被手动导航到其他页面，已停止');
+  }
+
+  throw new Error('自动化标签被手动导航，已停止');
 }
 
 async function evaluateInPage(fn, ...args) {

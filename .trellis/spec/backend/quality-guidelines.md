@@ -78,7 +78,8 @@ Questions to answer:
 - `chrome.debugger.onDetach` fires unexpectedly -> stop and surface a clear stopped/error status.
 - Automation tab closes -> stop and clear `browseTabId`.
 - Automation tab navigates outside `https://linux.do/*` -> stop.
-- Automation tab manually navigates away from the expected LinuxDo page during a run -> stop.
+- Automation tab manually navigates away from the expected LinuxDo flow during a run -> stop.
+- Same-topic Discourse URL changes, such as adding a post-number segment, are not manual navigation and must not stop automation.
 - Login/signup page detected -> stop with a login-required message.
 - Repeated empty topic list -> retry a small bounded number of times, then stop.
 
@@ -86,12 +87,14 @@ Questions to answer:
 - Good: User clicks start with no LinuxDo tab; extension creates a grouped `/latest` tab, attaches CDP, and popup shows running progress.
 - Base: User clicks start with an existing LinuxDo tab; extension reuses and groups that tab.
 - Bad: User opens DevTools for the automation tab; debugger detaches, and the popup must not keep showing stale running state.
+- Bad: Same-topic scroll updates the URL from `/t/slug/123` to `/t/slug/123/2`; this must continue, not stop as manual navigation.
 
 ### 6. Tests Required
 - Syntax-check changed JavaScript with `node --check`.
 - Validate `manifest.json` with `python3 -m json.tool`.
 - Search for stale legacy paths such as `contentIsRunning`, `chrome.tabs.sendMessage`, `chrome.scripting`, `content_scripts`, and confirm they are not part of the active automation path.
 - Manual extension QA should cover start, stop, no-existing-tab startup, focus/view, tab close, debugger detach, and manual navigation interruption.
+- For inactive-tab scrolling, prefer `Runtime.evaluate` with `window.scrollBy()` over `Input.dispatchMouseEvent(mouseWheel)`, because CDP input events model foreground user input and may not advance an inactive tab.
 
 ### 7. Wrong vs Correct
 
@@ -114,6 +117,15 @@ chrome.debugger.sendCommand({ tabId }, 'Page.navigate', { url });
 ```
 
 The background controller owns navigation, DOM inspection, scroll input, and cleanup.
+
+For scrolling an inactive automation tab, the controller should execute a page scroll command:
+
+```javascript
+chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
+  expression: 'window.scrollBy(0, 100); window.scrollY',
+  returnByValue: true
+});
+```
 
 ---
 
