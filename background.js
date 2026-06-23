@@ -386,27 +386,39 @@ async function runBrowseSession() {
 }
 
 async function fetchTopicListFromApi(page) {
-  const url = page === 0 ? LINUXDO_API_BASE : `${LINUXDO_API_BASE}?page=${page}`;
-  const resp = await fetch(url, { credentials: 'include' });
-  if (resp.status === 403 || resp.status === 401) {
-    throw new Error('请先登录 LinuxDo 后再启动自动浏览');
-  }
-  if (!resp.ok) throw new Error(`API 请求失败: ${resp.status}`);
-  const data = await resp.json();
+  const apiUrl = page === 0 ? LINUXDO_API_BASE : `${LINUXDO_API_BASE}?page=${page}`;
 
-  if (data.error_type === 'not_found' || data.login_required) {
-    throw new Error('请先登录 LinuxDo 后再启动自动浏览');
-  }
+  const result = await evaluateInPage((url) => {
+    return fetch(url, {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' }
+    })
+      .then((resp) => {
+        if (resp.status === 401 || resp.status === 403) {
+          return { error: '请先登录 LinuxDo 后再启动自动浏览' };
+        }
+        if (!resp.ok) return { error: `API 请求失败: ${resp.status}` };
+        return resp.json();
+      })
+      .then((data) => {
+        if (data.error) return { error: data.error };
+        if (data.error_type === 'not_found' || data.login_required) {
+          return { error: '请先登录 LinuxDo 后再启动自动浏览' };
+        }
+        const topics = (data.topic_list?.topics || [])
+          .filter((t) => !t.pinned)
+          .map((t) => ({
+            href: `https://linux.do/t/${t.slug}/${t.id}`,
+            title: t.title || t.fancy_title || '(无标题)'
+          }));
+        return { topics, hasMore: Boolean(data.topic_list?.more_topics_url) };
+      })
+      .catch((err) => ({ error: err.message || 'API 请求异常' }));
+  }, apiUrl);
 
-  const topics = (data.topic_list?.topics || [])
-    .filter((t) => !t.pinned)
-    .map((t) => ({
-      href: `https://linux.do/t/${t.slug}/${t.id}`,
-      title: t.title || t.fancy_title || '(无标题)'
-    }));
-
-  const hasMore = Boolean(data.topic_list?.more_topics_url);
-  return { topics, hasMore };
+  if (!result) throw new Error('API 调用无返回结果');
+  if (result.error) throw new Error(result.error);
+  return result;
 }
 
 async function browseCurrentListPage() {
