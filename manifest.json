@@ -3,18 +3,12 @@
   "name": "LinuxDo Auto Browse",
   "version": "1.0.0",
   "description": "自动浏览 LinuxDo 论坛帖子，模拟真人阅读行为",
-  "permissions": ["activeTab", "storage", "tabs", "tabGroups", "scripting"],
+  "minimum_chrome_version": "118",
+  "permissions": ["storage", "tabs", "tabGroups", "debugger"],
   "host_permissions": ["https://linux.do/*"],
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [
-    {
-      "matches": ["https://linux.do/*"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

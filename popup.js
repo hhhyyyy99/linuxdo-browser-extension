@@ -15,7 +15,7 @@ const errorMsg = document.getElementById('error-msg');
 const SPEED_LABELS = { 1: '极慢', 2: '慢速', 3: '中速', 4: '快速', 5: '极快' };
 
 let browseTabId = null;
-let isStarting = false; // guard against stale storage events during startup
+let isStarting = false;
 
 function updateSpeedLabel(value) {
   speedText.textContent = SPEED_LABELS[value] || '慢速';
@@ -30,10 +30,13 @@ function setStatus(text, state = '') {
 }
 
 function showProgress(current, total, title) {
+  const safeCurrent = Number(current) || 0;
+  const safeTotal = Math.max(Number(total) || 0, safeCurrent + 1, 1);
+
   progress.classList.remove('hidden');
   topicInfo.classList.remove('hidden');
-  progressText.textContent = `${current + 1} / ${total}`;
-  progressFill.style.width = `${((current + 1) / total) * 100}%`;
+  progressText.textContent = `${safeCurrent + 1} / ${safeTotal}`;
+  progressFill.style.width = `${Math.min(100, ((safeCurrent + 1) / safeTotal) * 100)}%`;
   if (title) topicTitle.textContent = title;
 }
 
@@ -63,146 +66,160 @@ function updateUI(running) {
   }
 }
 
-async function sendToContent(msg) {
-  if (!browseTabId) return null;
-  try {
-    return await chrome.tabs.sendMessage(browseTabId, msg);
-  } catch (e) {
-    return null;
+function sendToBackground(msg, callback = () => {}) {
+  chrome.runtime.sendMessage(msg, (resp) => {
+    if (chrome.runtime.lastError) {
+      callback(null);
+      return;
+    }
+    callback(resp || null);
+  });
+}
+
+function applyBrowseStatus(status, data = {}) {
+  switch (status) {
+    case 'starting':
+      updateUI(true);
+      setStatus('启动中...', 'running');
+      break;
+    case 'resuming':
+      updateUI(true);
+      setStatus('恢复中...', 'running');
+      break;
+    case 'browsing':
+      updateUI(true);
+      showProgress(data.current || 0, data.total || 0, data.title);
+      break;
+    case 'on-topic':
+      updateUI(true);
+      if (data.total) {
+        setStatus(`浏览帖子 (${(data.current || 0) + 1}/${data.total})`, 'running');
+      } else {
+        setStatus('浏览帖子', 'running');
+      }
+      showProgress(data.current || 0, data.total || 0, data.title);
+      break;
+    case 'next-page':
+      updateUI(true);
+      setStatus('翻页中...', 'running');
+      break;
+    case 'topic-error':
+      updateUI(true);
+      setStatus('跳过失败帖子', 'running');
+      showProgress(data.current || 0, data.total || 0, data.title);
+      if (data.error) showError(data.error);
+      break;
+    case 'complete':
+      updateUI(false);
+      setStatus('全部完成', 'complete');
+      break;
+    case 'stopped':
+      updateUI(false);
+      if (data.error) {
+        setStatus('已停止', 'error');
+        showError(data.error);
+      } else {
+        setStatus('已停止', '');
+      }
+      break;
+    case 'no-topics':
+      updateUI(true);
+      setStatus('未找到帖子，重试中...', 'error');
+      if (data.error) showError(data.error);
+      break;
   }
 }
 
-// Start: tell background to find linux.do tab, group it, and start browsing
 btnStart.addEventListener('click', () => {
   hideError();
   isStarting = true;
   setStatus('启动中...', '');
 
-  chrome.runtime.sendMessage({ type: 'start-browse' }, (resp) => {
-    if (chrome.runtime.lastError) {
+  sendToBackground({ type: 'start-browse' }, (resp) => {
+    if (!resp) {
       isStarting = false;
       showError('通信失败，请重试');
       setStatus('就绪', '');
       return;
     }
-    if (resp && resp.error) {
+
+    if (resp.error) {
       isStarting = false;
       showError(resp.error);
       setStatus('就绪', '');
       return;
     }
-    // Don't update UI here — let the storage listener handle it
-    // when the content script sends its first browse-status notification.
-    // Safety fallback: if no storage event arrives in 8s, assume started.
+
     setTimeout(() => {
-      if (isStarting) {
-        updateUI(true);
-      }
+      if (isStarting) updateUI(true);
     }, 8000);
   });
 });
 
-// Stop: tell background to stop and ungroup
 btnStop.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'stop-browse' }, () => {
-    chrome.storage.local.set({ contentIsRunning: false });
+  sendToBackground({ type: 'stop-browse' }, () => {
+    chrome.storage.local.set({
+      cdpIsRunning: false,
+      contentIsRunning: false
+    });
     updateUI(false);
     setStatus('已停止', '');
   });
 });
 
-// View browse tab
 btnView.addEventListener('click', () => {
   if (browseTabId) {
-    chrome.runtime.sendMessage({ type: 'focus-browse-tab' });
+    sendToBackground({ type: 'focus-browse-tab' });
   }
 });
 
-// Listen for status updates from background — primary UI driver
 chrome.storage.onChanged.addListener((changes) => {
-  if (changes.browseStatus) {
-    const status = changes.browseStatus.newValue;
-    const data = changes.browseData?.newValue || {};
-
-    switch (status) {
-      case 'starting':
-        setStatus('启动中...', 'running');
-        break;
-      case 'resuming':
-        setStatus('恢复中...', 'running');
-        break;
-      case 'browsing':
-        updateUI(true);
-        showProgress(data.current || 0, data.total || 0, data.title);
-        break;
-      case 'on-topic':
-        updateUI(true);
-        setStatus(`浏览帖子 (${(data.current || 0) + 1}/${data.total || 0})`, 'running');
-        showProgress(data.current || 0, data.total || 0, data.title);
-        break;
-      case 'next-page':
-        setStatus('翻页中...', 'running');
-        break;
-      case 'topic-error':
-        setStatus('跳过失败帖子', 'running');
-        if (data.error) showError(data.error);
-        break;
-      case 'complete':
-        setStatus('全部完成', 'complete');
-        updateUI(false);
-        break;
-      case 'stopped':
-        updateUI(false);
-        if (data.error) {
-          showError(data.error);
-        } else {
-          setStatus('已停止', '');
-        }
-        break;
-      case 'no-topics':
-        setStatus('未找到帖子', 'error');
-        break;
-    }
-  }
-
   if (changes.browseTabId) {
     browseTabId = changes.browseTabId.newValue;
   }
-});
 
-// Load saved settings on popup open
-chrome.storage.local.get(['speedSetting', 'browseTabId', 'browseStatus'], (result) => {
-  const savedSpeed = result.speedSetting || 2;
-  speedSlider.value = savedSpeed;
-  updateSpeedLabel(savedSpeed);
-
-  browseTabId = result.browseTabId || null;
-
-  // Default to stopped state — verification below may override
-  updateUI(false);
-
-  // If storage says running, verify with the actual content script
-  if (browseTabId && result.browseStatus && !['stopped', 'complete'].includes(result.browseStatus)) {
-    setStatus('检查状态...', '');
-    chrome.tabs.sendMessage(browseTabId, { type: 'get-status' }, (resp) => {
-      if (chrome.runtime.lastError || !resp || !resp.isRunning) {
-        chrome.storage.local.set({
-          browseStatus: 'stopped',
-          browseTabId: null,
-          contentIsRunning: false
-        });
-        browseTabId = null;
-        updateUI(false);
-      } else {
-        updateUI(true);
-      }
-    });
+  if (changes.browseStatus) {
+    const status = changes.browseStatus.newValue;
+    const data = changes.browseData?.newValue || {};
+    applyBrowseStatus(status, data);
   }
 });
 
+chrome.storage.local.get(
+  ['speedSetting', 'browseTabId', 'browseStatus', 'browseData', 'cdpIsRunning'],
+  (result) => {
+    const savedSpeed = result.speedSetting || 2;
+    speedSlider.value = savedSpeed;
+    updateSpeedLabel(savedSpeed);
+
+    browseTabId = result.browseTabId || null;
+    updateUI(false);
+
+    sendToBackground({ type: 'get-background-status' }, (resp) => {
+      if (!resp) {
+        if (result.cdpIsRunning && result.browseStatus) {
+          applyBrowseStatus(result.browseStatus, result.browseData || {});
+        }
+        return;
+      }
+
+      browseTabId = resp.browseTabId || result.browseTabId || null;
+
+      if (resp.isRunning) {
+        applyBrowseStatus(resp.status || result.browseStatus || 'starting', resp.data || result.browseData || {});
+        return;
+      }
+
+      if (result.browseStatus === 'complete' || (result.browseStatus === 'stopped' && result.browseData?.error)) {
+        applyBrowseStatus(result.browseStatus, result.browseData || {});
+      }
+    });
+  }
+);
+
 speedSlider.addEventListener('input', () => {
-  const value = parseInt(speedSlider.value);
+  const value = parseInt(speedSlider.value, 10);
   updateSpeedLabel(value);
   chrome.storage.local.set({ speedSetting: value });
-  sendToContent({ type: 'set-speed', speed: value });
+  sendToBackground({ type: 'set-speed', speed: value });
 });
