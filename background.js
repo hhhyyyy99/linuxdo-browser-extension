@@ -1,6 +1,7 @@
 // Background service worker - owns CDP-driven browsing automation.
 
 const LINUXDO_LATEST_URL = 'https://linux.do/latest';
+const LINUXDO_API_BASE = 'https://linux.do/latest.json';
 const GROUP_TITLE = 'LinuxDo 刷帖';
 const GROUP_COLOR = 'cyan';
 const CDP_PROTOCOL_VERSION = '1.3';
@@ -25,6 +26,7 @@ function createEmptySession() {
     debuggerAttached: false,
     expectedDetach: false,
     currentListUrl: LINUXDO_LATEST_URL,
+    currentPage: 0,
     currentTopicIndex: 0,
     noTopicRetries: 0,
     speedSetting: 2,
@@ -201,6 +203,7 @@ async function startBrowse() {
   session.totalBrowsed = 0;
   session.stopRequested = false;
   session.currentListUrl = LINUXDO_LATEST_URL;
+  session.currentPage = 0;
   session.currentTopicIndex = 0;
   session.noTopicRetries = 0;
 
@@ -382,13 +385,44 @@ async function runBrowseSession() {
   }
 }
 
+async function fetchTopicListFromApi(page) {
+  const url = page === 0 ? LINUXDO_API_BASE : `${LINUXDO_API_BASE}?page=${page}`;
+  const resp = await fetch(url, { credentials: 'include' });
+  if (resp.status === 403 || resp.status === 401) {
+    throw new Error('请先登录 LinuxDo 后再启动自动浏览');
+  }
+  if (!resp.ok) throw new Error(`API 请求失败: ${resp.status}`);
+  const data = await resp.json();
+
+  if (data.error_type === 'not_found' || data.login_required) {
+    throw new Error('请先登录 LinuxDo 后再启动自动浏览');
+  }
+
+  const topics = (data.topic_list?.topics || [])
+    .filter((t) => !t.pinned)
+    .map((t) => ({
+      href: `https://linux.do/t/${t.slug}/${t.id}`,
+      title: t.title || t.fancy_title || '(无标题)'
+    }));
+
+  const hasMore = Boolean(data.topic_list?.more_topics_url);
+  return { topics, hasMore };
+}
+
 async function browseCurrentListPage() {
   ensureRunning();
-  await navigateTo(session.currentListUrl);
 
-  const listInfo = await waitForListInfo(session.currentListUrl);
-  if (listInfo.loginRequired || isLoginLikeUrl(listInfo.href)) {
-    throw new Error('请先登录 LinuxDo 后再启动自动浏览');
+  let listInfo;
+  try {
+    listInfo = await fetchTopicListFromApi(session.currentPage);
+  } catch (err) {
+    session.noTopicRetries += 1;
+    await updateStatus('no-topics', { error: `获取帖子列表失败: ${err.message}` });
+    if (session.noTopicRetries >= MAX_NO_TOPIC_RETRIES) {
+      throw new Error('连续多次获取帖子列表失败，已停止');
+    }
+    await interruptibleDelay(5000, 8000);
+    return true;
   }
 
   if (listInfo.topics.length === 0) {
@@ -404,12 +438,12 @@ async function browseCurrentListPage() {
   session.noTopicRetries = 0;
 
   if (session.currentTopicIndex >= listInfo.topics.length) {
-    if (!listInfo.nextHref) {
+    if (!listInfo.hasMore) {
       await stopSession({ status: 'complete' });
       return false;
     }
 
-    session.currentListUrl = listInfo.nextHref;
+    session.currentPage += 1;
     session.currentTopicIndex = 0;
     await updateStatus('next-page');
     await interruptibleDelay(800, 1500);
