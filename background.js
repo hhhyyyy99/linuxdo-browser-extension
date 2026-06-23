@@ -1,7 +1,6 @@
 // Background service worker - owns CDP-driven browsing automation.
 
 const LINUXDO_LATEST_URL = 'https://linux.do/latest';
-const LINUXDO_API_BASE = 'https://linux.do/latest.json';
 const GROUP_TITLE = 'LinuxDo 刷帖';
 const GROUP_COLOR = 'cyan';
 const CDP_PROTOCOL_VERSION = '1.3';
@@ -26,7 +25,6 @@ function createEmptySession() {
     debuggerAttached: false,
     expectedDetach: false,
     currentListUrl: LINUXDO_LATEST_URL,
-    currentPage: 0,
     currentTopicIndex: 0,
     noTopicRetries: 0,
     speedSetting: 2,
@@ -203,7 +201,6 @@ async function startBrowse() {
   session.totalBrowsed = 0;
   session.stopRequested = false;
   session.currentListUrl = LINUXDO_LATEST_URL;
-  session.currentPage = 0;
   session.currentTopicIndex = 0;
   session.noTopicRetries = 0;
 
@@ -385,61 +382,13 @@ async function runBrowseSession() {
   }
 }
 
-async function fetchTopicListFromApi(page) {
-  const apiUrl = page === 0 ? LINUXDO_API_BASE : `${LINUXDO_API_BASE}?page=${page}`;
-
-  // Read cookies for linux.do and attach them to the request
-  const cookies = await new Promise((resolve) => {
-    chrome.cookies.getAll({ url: 'https://linux.do' }, (c) => resolve(c || []));
-  });
-
-  const headers = {};
-  if (cookies.length > 0) {
-    headers['Cookie'] = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-  }
-
-  let resp;
-  try {
-    resp = await fetch(apiUrl, { headers, credentials: 'omit' });
-  } catch (err) {
-    throw new Error(`网络请求失败: ${err.message}`);
-  }
-
-  if (resp.status === 401 || resp.status === 403) {
-    throw new Error('请先登录 LinuxDo 后再启动自动浏览');
-  }
-  if (!resp.ok) throw new Error(`API 请求失败: ${resp.status}`);
-
-  const data = await resp.json();
-
-  if (data.error_type === 'not_found' || data.login_required) {
-    throw new Error('请先登录 LinuxDo 后再启动自动浏览');
-  }
-
-  const topics = (data.topic_list?.topics || [])
-    .filter((t) => !t.pinned)
-    .map((t) => ({
-      href: `https://linux.do/t/${t.slug}/${t.id}`,
-      title: t.title || t.fancy_title || '(无标题)'
-    }));
-
-  return { topics, hasMore: Boolean(data.topic_list?.more_topics_url) };
-}
-
 async function browseCurrentListPage() {
   ensureRunning();
+  await navigateTo(session.currentListUrl);
 
-  let listInfo;
-  try {
-    listInfo = await fetchTopicListFromApi(session.currentPage);
-  } catch (err) {
-    session.noTopicRetries += 1;
-    await updateStatus('no-topics', { error: `获取帖子列表失败: ${err.message}` });
-    if (session.noTopicRetries >= MAX_NO_TOPIC_RETRIES) {
-      throw new Error('连续多次获取帖子列表失败，已停止');
-    }
-    await interruptibleDelay(5000, 8000);
-    return true;
+  const listInfo = await waitForListInfo(session.currentListUrl);
+  if (listInfo.loginRequired || isLoginLikeUrl(listInfo.href)) {
+    throw new Error('请先登录 LinuxDo 后再启动自动浏览');
   }
 
   if (listInfo.topics.length === 0) {
@@ -455,12 +404,13 @@ async function browseCurrentListPage() {
   session.noTopicRetries = 0;
 
   if (session.currentTopicIndex >= listInfo.topics.length) {
-    if (!listInfo.hasMore) {
+    // All topics on this page browsed — try loading more via infinite scroll
+    const loaded = await loadMoreTopics();
+    if (!loaded) {
       await stopSession({ status: 'complete' });
       return false;
     }
-
-    session.currentPage += 1;
+    // Re-navigate to pick up newly loaded topics
     session.currentTopicIndex = 0;
     await updateStatus('next-page');
     await interruptibleDelay(800, 1500);
@@ -569,6 +519,37 @@ async function waitForListInfo(expectedUrl) {
 
 function documentLooksLoaded(info) {
   return info.readyState === 'complete' && info.listReady;
+}
+
+async function loadMoreTopics() {
+  // Scroll to the bottom to trigger Discourse's infinite scroll
+  const initialCount = await evaluateInPage(() => {
+    return document.querySelectorAll('.topic-list-item').length;
+  });
+
+  // Try scrolling to the bottom multiple times to trigger lazy-load
+  for (let attempt = 0; attempt < 10; attempt++) {
+    ensureRunning();
+
+    await evaluateInPage(() => {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      // Also try clicking the "Load More" button if it exists
+      const btn = document.querySelector('.load-more button, .load-more a');
+      if (btn) btn.click();
+    });
+
+    await interruptibleDelay(1500, 2500);
+
+    const newCount = await evaluateInPage(() => {
+      return document.querySelectorAll('.topic-list-item').length;
+    });
+
+    if (newCount > initialCount) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function collectListInfo() {
