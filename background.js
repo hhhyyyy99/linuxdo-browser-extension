@@ -294,21 +294,10 @@ async function setPostLimit(postLimit) {
 // ── Agent API ──────────────────────────────────────────────────
 
 async function getAgentConfig() {
-  // Try session storage first for API key (more secure, not persisted to disk)
-  let apiKey = '';
-  try {
-    const sess = await chromeAsync((done) => chrome.storage.session.get(['agentApiKey'], done));
-    apiKey = sess.agentApiKey || '';
-  } catch {
-    // session storage may not be available in all contexts
-  }
-
   const saved = await storageGet(['agentBaseUrl', 'agentApiKey', 'agentModel', 'agentPreference']).catch(() => ({}));
-  if (!apiKey) apiKey = saved.agentApiKey || '';
-
   return {
     baseUrl: (saved.agentBaseUrl || '').replace(/\/+$/, ''),
-    apiKey,
+    apiKey: saved.agentApiKey || '',
     model: saved.agentModel || 'gpt-4o-mini',
     preference: saved.agentPreference || ''
   };
