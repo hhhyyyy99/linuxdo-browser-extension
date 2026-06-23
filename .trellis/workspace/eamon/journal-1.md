@@ -142,3 +142,36 @@ Fixed CDP automation so inactive tabs scroll through Runtime.evaluate window.scr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: perf: CDP 调用优化 - 合并 autoScrollTopic 循环
+
+**Date**: 2026-06-23
+**Task**: perf: CDP 调用优化 - 合并 autoScrollTopic 循环
+**Branch**: `main`
+
+### Summary
+
+将 autoScrollTopic 每轮 3 次 evaluateInPage（URL检查+滚动位置+执行滚动）合并为单次调用，CDP 往返减少 67%。不清理缓存/ BFCache，聚焦调用频率优化。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4e42f03` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
