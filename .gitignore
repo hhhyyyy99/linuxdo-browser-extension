@@ -4,7 +4,6 @@
 .trellis/.template-hashes.json
 .trellis/.runtime/
 .trellis/.cache/
-.trellis/workspace/
 
 # Claude Code
 .claude/
