@@ -293,11 +293,43 @@ async function setPostLimit(postLimit) {
 
 // ── Agent API ──────────────────────────────────────────────────
 
+const CRYPTO_SALT_KEY = 'agentCryptoSalt';
+
+async function decryptApiKey(encrypted) {
+  if (!encrypted) return '';
+  try {
+    const { [CRYPTO_SALT_KEY]: salt } = await storageGet([CRYPTO_SALT_KEY]);
+    if (!salt) return encrypted; // Not encrypted (legacy)
+
+    const enc = new TextEncoder();
+    const material = await crypto.subtle.importKey(
+      'raw', enc.encode(chrome.runtime.id + salt), 'PBKDF2', false, ['deriveKey']
+    );
+    const key = await crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: enc.encode(salt), iterations: 100000, hash: 'SHA-256' },
+      material,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt']
+    );
+
+    const data = Uint8Array.from(atob(encrypted), (c) => c.charCodeAt(0));
+    const iv = data.slice(0, 12);
+    const cipher = data.slice(12);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
+    return new TextDecoder().decode(plain);
+  } catch {
+    return encrypted; // Fallback: treat as plaintext
+  }
+}
+
 async function getAgentConfig() {
   const saved = await storageGet(['agentBaseUrl', 'agentApiKey', 'agentModel', 'agentPreference']).catch(() => ({}));
+  const apiKey = await decryptApiKey(saved.agentApiKey || '');
+
   return {
     baseUrl: (saved.agentBaseUrl || '').replace(/\/+$/, ''),
-    apiKey: saved.agentApiKey || '',
+    apiKey,
     model: saved.agentModel || 'gpt-4o-mini',
     preference: saved.agentPreference || ''
   };

@@ -32,6 +32,56 @@ const SPEED_LABELS = { 1: '极慢', 2: '慢速', 3: '中速', 4: '快速', 5: '�
 let browseTabId = null;
 let isStarting = false;
 
+// ── Crypto: AES-GCM encryption for API Key ──────────────────
+const CRYPTO_SALT_KEY = 'agentCryptoSalt';
+
+async function getCryptoKey(salt) {
+  const enc = new TextEncoder();
+  // Derive key from extension ID + salt (device-bound)
+  const material = await crypto.subtle.importKey(
+    'raw', enc.encode(chrome.runtime.id + salt), 'PBKDF2', false, ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: enc.encode(salt), iterations: 100000, hash: 'SHA-256' },
+    material,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptText(plaintext) {
+  const { [CRYPTO_SALT_KEY]: salt } = await chrome.storage.local.get(CRYPTO_SALT_KEY);
+  const actualSalt = salt || crypto.randomUUID();
+  if (!salt) await chrome.storage.local.set({ [CRYPTO_SALT_KEY]: actualSalt });
+
+  const key = await getCryptoKey(actualSalt);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder();
+  const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(plaintext));
+  // Combine iv + cipher into one hex string
+  const combined = new Uint8Array(iv.length + new Uint8Array(cipher).length);
+  combined.set(iv);
+  combined.set(new Uint8Array(cipher), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptText(encrypted) {
+  try {
+    const { [CRYPTO_SALT_KEY]: salt } = await chrome.storage.local.get(CRYPTO_SALT_KEY);
+    if (!salt) return encrypted; // Not encrypted yet (legacy)
+
+    const key = await getCryptoKey(salt);
+    const data = Uint8Array.from(atob(encrypted), (c) => c.charCodeAt(0));
+    const iv = data.slice(0, 12);
+    const cipher = data.slice(12);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
+    return new TextDecoder().decode(plain);
+  } catch {
+    return encrypted; // Fallback: treat as plaintext (legacy)
+  }
+}
+
 // ── Tab Switching ───────────────────────────────────────────
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => {
@@ -248,9 +298,15 @@ chrome.storage.local.get(
     updateLimitLabel(savedLimit);
 
     agentBaseUrl.value = result.agentBaseUrl || '';
-    agentApiKey.value = result.agentApiKey || '';
     agentModel.value = result.agentModel || '';
     agentPreference.value = result.agentPreference || '';
+
+    // Decrypt API key
+    if (result.agentApiKey) {
+      decryptText(result.agentApiKey).then((decrypted) => {
+        agentApiKey.value = decrypted;
+      });
+    }
 
     browseTabId = result.browseTabId || null;
     updateUI(false);
@@ -321,10 +377,13 @@ btnToggleKey.addEventListener('click', () => {
   agentApiKey.type = agentApiKey.type === 'password' ? 'text' : 'password';
 });
 
-btnSaveAgent.addEventListener('click', () => {
+btnSaveAgent.addEventListener('click', async () => {
+  const apiKeyRaw = agentApiKey.value.trim();
+  const encryptedKey = apiKeyRaw ? await encryptText(apiKeyRaw) : '';
+
   const config = {
     agentBaseUrl: agentBaseUrl.value.trim(),
-    agentApiKey: agentApiKey.value.trim(),
+    agentApiKey: encryptedKey,
     agentModel: agentModel.value.trim(),
     agentPreference: agentPreference.value.trim()
   };
