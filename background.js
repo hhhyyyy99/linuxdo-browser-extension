@@ -12,6 +12,9 @@ const TOPIC_READY_SCROLL_MARGIN_PX = 80;
 const TOPIC_READY_HEIGHT_DELTA_PX = 24;
 const TOPIC_READY_TEXT_DELTA = 16;
 const MIN_TOPIC_SCROLL_OBSERVE_MS = 4000;
+const AGENT_FILTER_TIMEOUT_MS = 3000;
+const POST_TOPIC_SUCCESS_DWELL_MIN_MS = 800;
+const POST_TOPIC_SUCCESS_DWELL_MAX_MS = 1800;
 
 const SPEED_CONFIG = {
   1: { minSpeed: 0.2, maxSpeed: 0.8, interval: 80 },
@@ -346,32 +349,46 @@ async function getAgentConfig() {
   };
 }
 
-async function callAgent(messages) {
-  const config = await getAgentConfig();
+async function callAgent(messages, options = {}) {
+  const config = options.config || await getAgentConfig();
   if (!config.baseUrl || !config.apiKey) {
     throw new Error('请先配置 Agent 的 BaseURL 和 API Key');
   }
 
-  const resp = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages,
-      temperature: 0.3
-    })
-  });
+  const timeoutMs = Number(options.timeoutMs) || 0;
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`Agent API 错误 ${resp.status}: ${text.slice(0, 200)}`);
+  try {
+    const resp = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      signal: controller ? controller.signal : undefined,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages,
+        temperature: 0.3
+      })
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`Agent API 错误 ${resp.status}: ${text.slice(0, 200)}`);
+    }
+
+    const data = await resp.json();
+    return data.choices?.[0]?.message?.content || '';
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error('Agent API 请求超时');
+    }
+    throw err;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
-
-  const data = await resp.json();
-  return data.choices?.[0]?.message?.content || '';
 }
 
 async function filterTopic(title, href) {
@@ -385,7 +402,7 @@ async function filterTopic(title, href) {
         content: `你是一个话题过滤器。用户偏好：${config.preference}\n判断给定话题是否匹配用户偏好。只回复 "yes" 或 "no"，不要回复其他内容。`
       },
       { role: 'user', content: `话题标题：${title}` }
-    ]);
+    ], { config, timeoutMs: AGENT_FILTER_TIMEOUT_MS });
     return result.trim().toLowerCase().startsWith('yes');
   } catch {
     return false;
@@ -717,7 +734,7 @@ async function browseTopic(topic, total) {
   });
   await interruptibleDelay(400, 900);
   await autoScrollTopic(topic.href);
-  await interruptibleDelay(2000, 5000);
+  await interruptibleDelay(POST_TOPIC_SUCCESS_DWELL_MIN_MS, POST_TOPIC_SUCCESS_DWELL_MAX_MS);
   await updateBrowsedTopicStatus(topic, 'success');
 }
 
