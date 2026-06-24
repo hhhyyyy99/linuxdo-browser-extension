@@ -17,8 +17,10 @@ const SPEED_CONFIG = {
 const session = createEmptySession();
 let stoppingPromise = null;
 let currentAgentSession = null;
+let currentBrowseRunSession = null;
 
 const MAX_SESSIONS = 100;
+const MAX_BROWSE_RUN_SESSIONS = 100;
 
 function createEmptySession() {
   return {
@@ -210,6 +212,8 @@ async function startBrowse() {
   // Create new agent session for topic recording
   currentAgentSession = createAgentSession();
   await saveCurrentSessionSnapshot();
+  currentBrowseRunSession = createBrowseRunSession();
+  await saveCurrentBrowseRunSnapshot();
 
   try {
     await storageSet({
@@ -418,6 +422,16 @@ function createAgentSession() {
   };
 }
 
+function createBrowseRunSession() {
+  return {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    startTime: new Date().toISOString(),
+    endTime: '',
+    status: 'running',
+    topics: []
+  };
+}
+
 async function saveAgentSession(sessionToSave) {
   const { agentSessions = [] } = await storageGet(['agentSessions']).catch(() => ({}));
   agentSessions.unshift(sessionToSave);
@@ -426,13 +440,40 @@ async function saveAgentSession(sessionToSave) {
   await storageSet({ agentSessions });
 }
 
+async function saveBrowseRunSession(sessionToSave) {
+  const { browseRunSessions = [] } = await storageGet(['browseRunSessions']).catch(() => ({}));
+  browseRunSessions.unshift(sessionToSave);
+  while (browseRunSessions.length > MAX_BROWSE_RUN_SESSIONS) browseRunSessions.pop();
+  await storageSet({ browseRunSessions });
+}
+
 async function saveCurrentSessionSnapshot() {
   if (!currentAgentSession) return;
   await storageSet({ currentAgentSnapshot: currentAgentSession });
 }
 
+async function saveCurrentBrowseRunSnapshot() {
+  if (!currentBrowseRunSession) return;
+  await storageSet({ currentBrowseRunSnapshot: currentBrowseRunSession });
+}
+
 async function clearCurrentSessionSnapshot() {
   await storageSet({ currentAgentSnapshot: null });
+}
+
+async function clearCurrentBrowseRunSnapshot() {
+  await storageSet({ currentBrowseRunSnapshot: null });
+}
+
+async function recordBrowsedTopic(topic) {
+  if (!currentBrowseRunSession) return;
+
+  currentBrowseRunSession.topics.push({
+    title: topic.title,
+    href: topic.href,
+    browsedAt: new Date().toISOString()
+  });
+  await saveCurrentBrowseRunSnapshot();
 }
 
 async function focusBrowseTab() {
@@ -513,6 +554,14 @@ async function stopSession({ status = 'stopped', error = null, fromDetach = fals
     session.debuggerAttached = false;
     await ungroupBrowseTab(tabId);
 
+    if (currentBrowseRunSession) {
+      currentBrowseRunSession.endTime = new Date().toISOString();
+      currentBrowseRunSession.status = error ? 'error' : status;
+      await saveBrowseRunSession(currentBrowseRunSession);
+    }
+    currentBrowseRunSession = null;
+    await clearCurrentBrowseRunSnapshot();
+
     // Save agent session if it has recorded topics
     if (currentAgentSession && currentAgentSession.topics.length > 0) {
       await saveAgentSession(currentAgentSession);
@@ -585,9 +634,10 @@ async function browseCurrentListPage() {
     postLimit: session.postLimit
   });
 
-  await browseTopic(topic, listInfo.topics.length);
+  const topicBrowsed = await browseTopic(topic, listInfo.topics.length);
   session.currentTopicIndex += 1;
   session.totalBrowsed += 1;
+  if (topicBrowsed) await recordBrowsedTopic(topic);
 
   // Agent: filter and record topic
   if (currentAgentSession) {
@@ -633,7 +683,7 @@ async function browseTopic(topic, total) {
       postLimit: session.postLimit
     });
     await interruptibleDelay(500, 1000);
-    return;
+    return false;
   }
 
   await interruptibleDelay(1500, 3000);
@@ -645,6 +695,7 @@ async function browseTopic(topic, total) {
   await interruptibleDelay(1000, 2000);
   await autoScrollTopic(topic.href);
   await interruptibleDelay(2000, 5000);
+  return true;
 }
 
 async function navigateTo(url) {
@@ -1035,6 +1086,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const { agentSessions = [] } = await storageGet(['agentSessions']).catch(() => ({}));
       const { currentAgentSnapshot = null } = await storageGet(['currentAgentSnapshot']).catch(() => ({}));
       return { sessions: agentSessions, current: currentAgentSnapshot };
+    })());
+  }
+
+  if (msg.type === 'get-browse-run-sessions') {
+    return respond(sendResponse, (async () => {
+      const { browseRunSessions = [] } = await storageGet(['browseRunSessions']).catch(() => ({}));
+      const { currentBrowseRunSnapshot = null } = await storageGet(['currentBrowseRunSnapshot']).catch(() => ({}));
+      return { sessions: browseRunSessions, current: currentBrowseRunSnapshot };
     })());
   }
 

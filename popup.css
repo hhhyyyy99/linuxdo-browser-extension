@@ -378,7 +378,8 @@ h1 {
 
 /* ── Summary / Sessions ───────────────────── */
 
-#session-list {
+#session-list,
+#record-list {
   max-height: 350px;
   overflow-y: auto;
 }
@@ -417,6 +418,11 @@ h1 {
 .session-count {
   color: #f8c291;
   font-weight: 500;
+}
+
+.session-state {
+  color: #6c757d;
+  font-size: 11px;
 }
 
 .session-actions {

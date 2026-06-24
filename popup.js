@@ -26,6 +26,8 @@ const agentMsg = document.getElementById('agent-msg');
 
 const sessionList = document.getElementById('session-list');
 const summaryEmpty = document.getElementById('summary-empty');
+const recordList = document.getElementById('record-list');
+const recordEmpty = document.getElementById('record-empty');
 
 const SPEED_LABELS = { 1: '极慢', 2: '慢速', 3: '中速', 4: '快速', 5: '极快' };
 
@@ -90,6 +92,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     tab.classList.add('active');
     document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
 
+    if (tab.dataset.tab === 'records') loadBrowseRunSessions();
     if (tab.dataset.tab === 'summary') loadSessions();
   });
 });
@@ -351,6 +354,11 @@ chrome.storage.onChanged.addListener((changes) => {
     browseTabId = changes.browseTabId.newValue;
   }
 
+  if (changes.currentBrowseRunSnapshot || changes.browseRunSessions) {
+    const recordsTab = document.getElementById('tab-records');
+    if (recordsTab?.classList.contains('active')) loadBrowseRunSessions();
+  }
+
   if (changes.browseStatus) {
     const status = changes.browseStatus.newValue;
     const data = changes.browseData?.newValue || {};
@@ -480,6 +488,59 @@ btnTestAgent.addEventListener('click', () => {
     }
   });
 });
+
+// ── Browse Records ──────────────────────────────────────────
+function loadBrowseRunSessions() {
+  sendToBackground({ type: 'get-browse-run-sessions' }, (resp) => {
+    if (!resp) return;
+
+    const { sessions = [], current = null } = resp;
+    const allSessions = current ? [current, ...sessions.filter((s) => s.id !== current.id)] : sessions;
+
+    if (allSessions.length === 0 && (!current || current.topics.length === 0)) {
+      recordEmpty.classList.remove('hidden');
+      recordList.innerHTML = '';
+      return;
+    }
+
+    recordEmpty.classList.add('hidden');
+    recordList.innerHTML = allSessions.map((s) => renderBrowseRunItem(s, s.id === current?.id)).join('');
+
+    recordList.querySelectorAll('.session-header').forEach((header) => {
+      header.addEventListener('click', () => {
+        const detail = header.nextElementSibling;
+        detail.classList.toggle('open');
+      });
+    });
+  });
+}
+
+function renderBrowseRunItem(run, isCurrent) {
+  const time = formatDate(run.startTime);
+  const count = run.topics.length;
+  const label = isCurrent || run.status === 'running' ? '(进行中)' : '';
+  const endText = run.endTime ? `结束 ${formatDate(run.endTime)}` : '运行中';
+
+  const topicHtml = run.topics.map((t) =>
+    `<li><a href="${escapeHtml(t.href)}" target="_blank">${escapeHtml(t.title)}</a></li>`
+  ).join('');
+
+  return `
+    <div class="session-item">
+      <div class="session-header">
+        <div class="session-meta">
+          <span class="session-time">${time} ${label}</span>
+          <span class="session-count">${count} 条</span>
+        </div>
+        <div class="session-actions">
+          <span class="session-state">${endText}</span>
+        </div>
+      </div>
+      <div class="session-detail">
+        ${count > 0 ? `<ul class="session-topics">${topicHtml}</ul>` : '<p style="color:#6c757d">暂无刷帖记录</p>'}
+      </div>
+    </div>`;
+}
 
 // ── Summary / Sessions ──────────────────────────────────────
 function formatDate(iso) {
