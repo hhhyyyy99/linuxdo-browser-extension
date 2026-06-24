@@ -117,18 +117,90 @@ function showProgress(current, total, title) {
   const isUnlimited = !total || total <= 0;
 
   progress.classList.remove('hidden');
-  topicInfo.classList.remove('hidden');
+  showTopicInfo(title);
 
   if (isUnlimited) {
     progressText.textContent = `${safeCurrent} / ∞`;
     progressFill.style.width = '100%';
   } else {
-    const safeTotal = Math.max(Number(total) || 0, safeCurrent + 1, 1);
+    const safeTotal = Math.max(Number(total) || 0, safeCurrent, 1);
     progressText.textContent = `${safeCurrent} / ${safeTotal}`;
     progressFill.style.width = `${Math.min(100, (safeCurrent / safeTotal) * 100)}%`;
   }
+}
 
+function hideProgress() {
+  progress.classList.add('hidden');
+  progressText.textContent = '';
+  progressFill.style.width = '0%';
+}
+
+function showTopicInfo(title) {
   if (title) topicTitle.textContent = title;
+  if (topicTitle.textContent) topicInfo.classList.remove('hidden');
+}
+
+function hideTopicInfo() {
+  topicInfo.classList.add('hidden');
+  topicTitle.textContent = '';
+}
+
+function getActiveTopicProgress(data = {}) {
+  const postLimit = Number(data.postLimit) || 0;
+  const totalBrowsed = Number(data.totalBrowsed);
+  const current = Number(data.current);
+  const total = Number(data.total);
+
+  if (postLimit > 0 && Number.isFinite(totalBrowsed)) {
+    return {
+      current: Math.min(totalBrowsed + 1, postLimit),
+      total: postLimit
+    };
+  }
+
+  if (total > 0 && Number.isFinite(current)) {
+    return {
+      current: Math.min(current + 1, total),
+      total
+    };
+  }
+
+  if (Number.isFinite(totalBrowsed) && totalBrowsed > 0) {
+    return {
+      current: totalBrowsed,
+      total: 0
+    };
+  }
+
+  return null;
+}
+
+function showActiveTopicProgress(data = {}) {
+  const progressData = getActiveTopicProgress(data);
+  showTopicInfo(data.title);
+
+  if (!progressData) {
+    hideProgress();
+    return;
+  }
+
+  showProgress(progressData.current, progressData.total, data.title);
+}
+
+function setActiveTopicStatus(data = {}) {
+  const progressData = getActiveTopicProgress(data);
+
+  if (progressData?.total > 0) {
+    setStatus(`浏览帖子 (${progressData.current}/${progressData.total})`, 'running');
+    return;
+  }
+
+  if (progressData) {
+    setStatus(`浏览帖子 ${progressData.current} / ∞`, 'running');
+    return;
+  }
+
+  setStatus('浏览帖子', 'running');
 }
 
 function showError(msg) {
@@ -151,8 +223,8 @@ function updateUI(running) {
     btnStart.classList.remove('hidden');
     btnStop.classList.add('hidden');
     btnView.classList.add('hidden');
-    progress.classList.add('hidden');
-    topicInfo.classList.add('hidden');
+    hideProgress();
+    hideTopicInfo();
     setStatus('就绪', '');
   }
 }
@@ -173,37 +245,37 @@ function applyBrowseStatus(status, data = {}) {
   switch (status) {
     case 'starting':
       updateUI(true);
+      hideProgress();
+      hideTopicInfo();
       setStatus('启动中...', 'running');
       break;
     case 'resuming':
       updateUI(true);
+      hideProgress();
+      hideTopicInfo();
       setStatus('恢复中...', 'running');
       break;
     case 'browsing':
       updateUI(true);
-      showProgress(data.totalBrowsed ?? data.current ?? 0, data.postLimit || data.total || 0, data.title);
+      hideProgress();
+      showTopicInfo(data.title);
+      setStatus('打开帖子中...', 'running');
       break;
     case 'on-topic':
       updateUI(true);
-      if (data.totalBrowsed !== undefined) {
-        const limit = data.postLimit || 0;
-        const label = limit > 0 ? `${data.totalBrowsed} / ${limit}` : `${data.totalBrowsed} / ∞`;
-        setStatus(`浏览帖子 ${label}`, 'running');
-      } else if (data.total) {
-        setStatus(`浏览帖子 (${(data.current || 0) + 1}/${data.total})`, 'running');
-      } else {
-        setStatus('浏览帖子', 'running');
-      }
-      showProgress(data.totalBrowsed ?? data.current ?? 0, data.postLimit || data.total || 0, data.title);
+      setActiveTopicStatus(data);
+      showActiveTopicProgress(data);
       break;
     case 'next-page':
       updateUI(true);
+      hideProgress();
+      hideTopicInfo();
       setStatus('翻页中...', 'running');
       break;
     case 'topic-error':
       updateUI(true);
       setStatus('跳过失败帖子', 'running');
-      showProgress(data.totalBrowsed ?? data.current ?? 0, data.postLimit || data.total || 0, data.title);
+      showActiveTopicProgress(data);
       if (data.error) showError(data.error);
       break;
     case 'complete':
@@ -221,6 +293,8 @@ function applyBrowseStatus(status, data = {}) {
       break;
     case 'no-topics':
       updateUI(true);
+      hideProgress();
+      hideTopicInfo();
       setStatus('未找到帖子，重试中...', 'error');
       if (data.error) showError(data.error);
       break;

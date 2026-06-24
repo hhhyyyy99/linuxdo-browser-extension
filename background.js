@@ -11,7 +11,7 @@ const SPEED_CONFIG = {
   2: { minSpeed: 0.5, maxSpeed: 2.5, interval: 60 },
   3: { minSpeed: 1.5, maxSpeed: 5.0, interval: 40 },
   4: { minSpeed: 4, maxSpeed: 10, interval: 30 },
-  5: { minSpeed: 8, maxSpeed: 20, interval: 20 }
+  5: { minSpeed: 24, maxSpeed: 56, interval: 70, bottomStableMs: 1800, stuckStableMs: 900 }
 };
 
 const session = createEmptySession();
@@ -805,6 +805,8 @@ async function waitForTopicContent(expectedUrl) {
 
 async function autoScrollTopic(expectedUrl) {
   const speedCfg = SPEED_CONFIG[session.speedSetting] || SPEED_CONFIG[2];
+  const bottomCountLimit = getScrollIterationLimit(speedCfg, 'bottomStableMs', 80);
+  const stuckCountLimit = getScrollIterationLimit(speedCfg, 'stuckStableMs', 30);
   let lastScrollY = -1;
   let stuckCount = 0;
   let bottomCount = 0;
@@ -868,7 +870,7 @@ async function autoScrollTopic(expectedUrl) {
         lastScrollHeight = result.scrollHeight;
       } else {
         bottomCount += 1;
-        if (bottomCount > 80) return;
+        if (bottomCount > bottomCountLimit) return;
       }
       await interruptibleDelay(speedCfg.interval, speedCfg.interval);
       continue;
@@ -880,7 +882,7 @@ async function autoScrollTopic(expectedUrl) {
     // Stuck detection
     if (result.scrollY === lastScrollY) {
       stuckCount += 1;
-      if (stuckCount > 30) return;
+      if (stuckCount > stuckCountLimit) return;
     } else {
       stuckCount = 0;
     }
@@ -890,6 +892,13 @@ async function autoScrollTopic(expectedUrl) {
   }
 
   throw new StopRequested();
+}
+
+function getScrollIterationLimit(speedCfg, durationKey, defaultIterations) {
+  const duration = Number(speedCfg[durationKey]) || 0;
+  if (duration <= 0) return defaultIterations;
+
+  return Math.max(1, Math.ceil(duration / speedCfg.interval));
 }
 
 async function scrollPageBy(deltaY) {

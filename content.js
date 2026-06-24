@@ -13,7 +13,7 @@
     2: { minSpeed: 0.5, maxSpeed: 2.5, interval: 60 },
     3: { minSpeed: 1.5, maxSpeed: 5.0, interval: 40 },
     4: { minSpeed: 4,   maxSpeed: 10,  interval: 30 },
-    5: { minSpeed: 8,   maxSpeed: 20,  interval: 20 }
+    5: { minSpeed: 24,  maxSpeed: 56,  interval: 70 }
   };
 
   // === Utilities ===
