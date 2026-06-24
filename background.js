@@ -5,6 +5,13 @@ const GROUP_TITLE = 'LinuxDo 刷帖';
 const GROUP_COLOR = 'cyan';
 const CDP_PROTOCOL_VERSION = '1.3';
 const MAX_NO_TOPIC_RETRIES = 3;
+const TOPIC_CONTENT_TIMEOUT_MS = 18000;
+const TOPIC_READY_POLL_MS = 300;
+const TOPIC_READY_STABLE_MS = 900;
+const TOPIC_READY_SCROLL_MARGIN_PX = 80;
+const TOPIC_READY_HEIGHT_DELTA_PX = 24;
+const TOPIC_READY_TEXT_DELTA = 16;
+const MIN_TOPIC_SCROLL_OBSERVE_MS = 4000;
 
 const SPEED_CONFIG = {
   1: { minSpeed: 0.2, maxSpeed: 0.8, interval: 80 },
@@ -702,13 +709,13 @@ async function browseTopic(topic, total) {
     return;
   }
 
-  await interruptibleDelay(1500, 3000);
+  await interruptibleDelay(800, 1500);
   await ensureExpectedLocation(topic.href);
   await evaluateInPage(() => {
     window.scrollTo(0, 0);
     return true;
   });
-  await interruptibleDelay(1000, 2000);
+  await interruptibleDelay(400, 900);
   await autoScrollTopic(topic.href);
   await interruptibleDelay(2000, 5000);
   await updateBrowsedTopicStatus(topic, 'success');
@@ -840,24 +847,29 @@ async function collectListInfo() {
 }
 
 async function waitForTopicContent(expectedUrl) {
+  const stability = {
+    scrollHeight: 0,
+    contentTextLength: 0,
+    stableSince: 0
+  };
+
   const result = await waitUntil(async () => {
     await ensureExpectedLocation(expectedUrl);
-    return evaluateInPage(() => {
-      const content = document.querySelector('.topic-body, #post_1, .cooked');
-      const loginRequired = Boolean(
-        document.querySelector('button.login-button, a[href="/login"], .login-required, .login-welcome')
-      );
+    const info = await collectTopicReadinessInfo();
 
-      if (loginRequired) {
-        return { ready: false, loginRequired: true };
-      }
+    if (info.loginRequired) {
+      return { ready: false, loginRequired: true };
+    }
 
-      return {
-        ready: Boolean(content && content.textContent.trim().length > 0),
-        loginRequired: false
-      };
-    });
-  }, 20000, 300, '等待帖子内容超时').catch((err) => {
+    if (!info.hasContent) return null;
+
+    const isStable = updateTopicReadinessStability(stability, info);
+    if (info.scrollable || isStable) {
+      return { ready: true, loginRequired: false };
+    }
+
+    return null;
+  }, TOPIC_CONTENT_TIMEOUT_MS, TOPIC_READY_POLL_MS, '等待帖子内容超时').catch((err) => {
     if (err instanceof StopRequested) throw err;
     if (/自动化标签|请先登录|已离开 linux\.do/.test(err.message || '')) throw err;
     return { ready: false, loginRequired: false };
@@ -870,10 +882,66 @@ async function waitForTopicContent(expectedUrl) {
   return result.ready;
 }
 
+async function collectTopicReadinessInfo() {
+  return evaluateInPage((scrollMargin) => {
+    const contentSelectors = [
+      '#post_1 .cooked',
+      '.topic-body .cooked',
+      '#post_1',
+      '.topic-body',
+      '.cooked'
+    ];
+    const contentNodes = contentSelectors.flatMap((selector) => [...document.querySelectorAll(selector)]);
+    const contentTextLength = contentNodes.reduce((maxLength, node) => {
+      const textLength = node.textContent ? node.textContent.trim().length : 0;
+      return Math.max(maxLength, textLength);
+    }, 0);
+    const scrollHeight = Math.max(
+      document.body ? document.body.scrollHeight : 0,
+      document.documentElement ? document.documentElement.scrollHeight : 0
+    );
+    const innerHeight = window.innerHeight ||
+      (document.documentElement ? document.documentElement.clientHeight : 0);
+    const loginRequired = Boolean(
+      document.querySelector('button.login-button, a[href="/login"], .login-required, .login-welcome')
+    );
+
+    return {
+      href: location.href,
+      readyState: document.readyState,
+      hasContent: contentTextLength > 0,
+      contentTextLength,
+      bodyTextLength: document.body ? document.body.innerText.trim().length : 0,
+      scrollHeight,
+      innerHeight,
+      scrollable: scrollHeight > innerHeight + scrollMargin,
+      loginRequired
+    };
+  }, TOPIC_READY_SCROLL_MARGIN_PX);
+}
+
+function updateTopicReadinessStability(stability, info) {
+  const now = Date.now();
+  const hasPrevious = stability.stableSince > 0;
+  const changed = !hasPrevious ||
+    Math.abs(info.scrollHeight - stability.scrollHeight) > TOPIC_READY_HEIGHT_DELTA_PX ||
+    Math.abs(info.contentTextLength - stability.contentTextLength) > TOPIC_READY_TEXT_DELTA;
+
+  if (changed) {
+    stability.stableSince = now;
+  }
+
+  stability.scrollHeight = info.scrollHeight;
+  stability.contentTextLength = info.contentTextLength;
+
+  return hasPrevious && now - stability.stableSince >= TOPIC_READY_STABLE_MS;
+}
+
 async function autoScrollTopic(expectedUrl) {
   const speedCfg = SPEED_CONFIG[session.speedSetting] || SPEED_CONFIG[2];
   const bottomCountLimit = getScrollIterationLimit(speedCfg, 'bottomStableMs', 80);
   const stuckCountLimit = getScrollIterationLimit(speedCfg, 'stuckStableMs', 30);
+  const startedAt = Date.now();
   let lastScrollY = -1;
   let stuckCount = 0;
   let bottomCount = 0;
@@ -929,6 +997,8 @@ async function autoScrollTopic(expectedUrl) {
       throw new Error('自动化标签被手动导航，已停止');
     }
 
+    const canFinishByScrollState = Date.now() - startedAt >= MIN_TOPIC_SCROLL_OBSERVE_MS;
+
     // Bottom detection with lazy-load wait
     if (result.atBottom) {
       if (result.scrollHeight > lastScrollHeight) {
@@ -937,7 +1007,7 @@ async function autoScrollTopic(expectedUrl) {
         lastScrollHeight = result.scrollHeight;
       } else {
         bottomCount += 1;
-        if (bottomCount > bottomCountLimit) return;
+        if (canFinishByScrollState && bottomCount > bottomCountLimit) return;
       }
       await interruptibleDelay(speedCfg.interval, speedCfg.interval);
       continue;
@@ -949,7 +1019,7 @@ async function autoScrollTopic(expectedUrl) {
     // Stuck detection
     if (result.scrollY === lastScrollY) {
       stuckCount += 1;
-      if (stuckCount > stuckCountLimit) return;
+      if (canFinishByScrollState && stuckCount > stuckCountLimit) return;
     } else {
       stuckCount = 0;
     }
