@@ -9,10 +9,36 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: #1a1a2e;
   color: #e0e0e0;
+  scrollbar-width: thin;
+  scrollbar-color: #4a5568 #0f1629;
 }
 
 .container {
   padding: 16px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0f1629;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4a5568;
+  border: 2px solid #0f1629;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #f8c291;
+}
+
+::-webkit-scrollbar-corner {
+  background: #0f1629;
 }
 
 h1 {
@@ -382,6 +408,8 @@ h1 {
 #record-list {
   max-height: 350px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #4a5568 #0f1629;
 }
 
 .session-item {
