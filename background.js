@@ -471,8 +471,23 @@ async function recordBrowsedTopic(topic) {
   currentBrowseRunSession.topics.push({
     title: topic.title,
     href: topic.href,
-    browsedAt: new Date().toISOString()
+    browsedAt: new Date().toISOString(),
+    status: 'browsing',
+    error: ''
   });
+  await saveCurrentBrowseRunSnapshot();
+}
+
+async function updateBrowsedTopicStatus(topic, status, error = '') {
+  if (!currentBrowseRunSession) return;
+
+  const record = [...currentBrowseRunSession.topics].reverse()
+    .find((item) => item.href === topic.href);
+  if (!record) return;
+
+  record.status = status;
+  record.error = error;
+  record.completedAt = new Date().toISOString();
   await saveCurrentBrowseRunSnapshot();
 }
 
@@ -674,6 +689,7 @@ async function browseTopic(topic, total) {
 
   const ready = await waitForTopicContent(topic.href);
   if (!ready) {
+    await updateBrowsedTopicStatus(topic, 'error', '帖子内容加载超时，已跳过');
     await updateStatus('topic-error', {
       total,
       current: session.currentTopicIndex,
@@ -695,6 +711,7 @@ async function browseTopic(topic, total) {
   await interruptibleDelay(1000, 2000);
   await autoScrollTopic(topic.href);
   await interruptibleDelay(2000, 5000);
+  await updateBrowsedTopicStatus(topic, 'success');
 }
 
 async function navigateTo(url) {

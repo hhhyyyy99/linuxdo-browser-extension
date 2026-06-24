@@ -521,9 +521,7 @@ function renderBrowseRunItem(run, isCurrent) {
   const label = isCurrent || run.status === 'running' ? '(进行中)' : '';
   const endText = run.endTime ? `结束 ${formatDate(run.endTime)}` : '运行中';
 
-  const topicHtml = run.topics.map((t) =>
-    `<li><a href="${escapeHtml(t.href)}" target="_blank">${escapeHtml(t.title)}</a></li>`
-  ).join('');
+  const topicHtml = run.topics.map(renderBrowseRunTopic).join('');
 
   return `
     <div class="session-item">
@@ -540,6 +538,25 @@ function renderBrowseRunItem(run, isCurrent) {
         ${count > 0 ? `<ul class="session-topics">${topicHtml}</ul>` : '<p style="color:#6c757d">暂无刷帖记录</p>'}
       </div>
     </div>`;
+}
+
+function renderBrowseRunTopic(topic) {
+  const status = topic.status || 'success';
+  const statusText = {
+    browsing: '浏览中',
+    success: '成功',
+    error: '失败'
+  }[status] || '成功';
+  const errorHtml = topic.error
+    ? `<span class="record-topic-error">${escapeHtml(topic.error)}</span>`
+    : '';
+
+  return `
+    <li class="record-topic ${status === 'error' ? 'record-topic-failed' : ''}">
+      <a href="${escapeHtml(topic.href)}" target="_blank">${escapeHtml(topic.title)}</a>
+      <span class="record-topic-status record-topic-status-${status}">${statusText}</span>
+      ${errorHtml}
+    </li>`;
 }
 
 // ── Summary / Sessions ──────────────────────────────────────

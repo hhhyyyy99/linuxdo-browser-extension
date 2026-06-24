@@ -490,6 +490,47 @@ h1 {
   color: #f8c291;
 }
 
+.record-topic {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.record-topic a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.record-topic-status {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.record-topic-status-browsing {
+  color: #f8c291;
+  background: #2d2416;
+}
+
+.record-topic-status-success {
+  color: #00b894;
+  background: #0d2818;
+}
+
+.record-topic-status-error {
+  color: #e74c3c;
+  background: #2d1b1b;
+}
+
+.record-topic-error {
+  grid-column: 1 / -1;
+  color: #e74c3c;
+  font-size: 11px;
+  white-space: normal;
+}
+
 .session-summary {
   background: #0f1629;
   border-radius: 4px;
