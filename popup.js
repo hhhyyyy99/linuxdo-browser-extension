@@ -161,17 +161,17 @@ function getActiveTopicProgress(data = {}) {
     };
   }
 
+  if (Number.isFinite(totalBrowsed)) {
+    return {
+      current: totalBrowsed + 1,
+      total: 0
+    };
+  }
+
   if (total > 0 && Number.isFinite(current)) {
     return {
       current: Math.min(current + 1, total),
       total
-    };
-  }
-
-  if (Number.isFinite(totalBrowsed) && totalBrowsed > 0) {
-    return {
-      current: totalBrowsed,
-      total: 0
     };
   }
 

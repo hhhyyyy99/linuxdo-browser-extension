@@ -634,10 +634,9 @@ async function browseCurrentListPage() {
     postLimit: session.postLimit
   });
 
-  const topicBrowsed = await browseTopic(topic, listInfo.topics.length);
+  await browseTopic(topic, listInfo.topics.length);
   session.currentTopicIndex += 1;
   session.totalBrowsed += 1;
-  if (topicBrowsed) await recordBrowsedTopic(topic);
 
   // Agent: filter and record topic
   if (currentAgentSession) {
@@ -664,6 +663,7 @@ async function browseTopic(topic, total) {
   ensureRunning();
 
   await navigateTo(topic.href);
+  await recordBrowsedTopic(topic);
   await updateStatus('on-topic', {
     total,
     current: session.currentTopicIndex,
@@ -683,7 +683,7 @@ async function browseTopic(topic, total) {
       postLimit: session.postLimit
     });
     await interruptibleDelay(500, 1000);
-    return false;
+    return;
   }
 
   await interruptibleDelay(1500, 3000);
@@ -695,7 +695,6 @@ async function browseTopic(topic, total) {
   await interruptibleDelay(1000, 2000);
   await autoScrollTopic(topic.href);
   await interruptibleDelay(2000, 5000);
-  return true;
 }
 
 async function navigateTo(url) {
