@@ -512,6 +512,13 @@ function loadBrowseRunSessions() {
         detail.classList.toggle('open');
       });
     });
+
+    recordList.querySelectorAll('.btn-delete').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteBrowseRunRecord(btn.dataset.id);
+      });
+    });
   });
 }
 
@@ -532,6 +539,7 @@ function renderBrowseRunItem(run, isCurrent) {
         </div>
         <div class="session-actions">
           <span class="session-state">${endText}</span>
+          ${!isCurrent ? `<button class="btn-sm btn-delete" data-id="${run.id}">删除</button>` : ''}
         </div>
       </div>
       <div class="session-detail">
@@ -684,5 +692,12 @@ function deleteSession(sessionId) {
   if (!confirm('确定删除这条记录？')) return;
   sendToBackground({ type: 'delete-session', sessionId }, () => {
     loadSessions();
+  });
+}
+
+function deleteBrowseRunRecord(sessionId) {
+  if (!confirm('确定删除这条浏览记录？')) return;
+  sendToBackground({ type: 'delete-browse-run-session', sessionId }, () => {
+    loadBrowseRunSessions();
   });
 }

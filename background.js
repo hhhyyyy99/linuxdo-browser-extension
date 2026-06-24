@@ -1222,6 +1222,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })());
   }
 
+  if (msg.type === 'delete-browse-run-session') {
+    return respond(sendResponse, (async () => {
+      const { browseRunSessions = [] } = await storageGet(['browseRunSessions']).catch(() => ({}));
+      const filtered = browseRunSessions.filter((s) => s.id !== msg.sessionId);
+      await storageSet({ browseRunSessions: filtered });
+      return { status: 'ok' };
+    })());
+  }
+
   if (msg.type === 'test-agent') {
     return respond(sendResponse, (async () => {
       try {
