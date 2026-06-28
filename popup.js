@@ -285,6 +285,11 @@ function applyBrowseStatus(status, data = {}) {
       updateUI(false);
       setStatus('全部完成', 'complete');
       break;
+    case 'no-more-topics':
+      updateUI(false);
+      setStatus('无法加载更多帖子', 'complete');
+      if (data.error) showError(data.error);
+      break;
     case 'stopped':
       updateUI(false);
       if (data.error) {
@@ -408,7 +413,11 @@ chrome.storage.local.get(
         return;
       }
 
-      if (result.browseStatus === 'complete' || (result.browseStatus === 'stopped' && result.browseData?.error)) {
+      if (
+        result.browseStatus === 'complete' ||
+        result.browseStatus === 'no-more-topics' ||
+        (result.browseStatus === 'stopped' && result.browseData?.error)
+      ) {
         applyBrowseStatus(result.browseStatus, result.browseData || {});
       }
     });
@@ -526,7 +535,7 @@ function renderBrowseRunItem(run, isCurrent) {
   const time = formatDate(run.startTime);
   const count = run.topics.length;
   const label = isCurrent || run.status === 'running' ? '(进行中)' : '';
-  const endText = run.endTime ? `结束 ${formatDate(run.endTime)}` : '运行中';
+  const endText = getBrowseRunEndText(run);
 
   const topicHtml = run.topics.map(renderBrowseRunTopic).join('');
 
@@ -546,6 +555,14 @@ function renderBrowseRunItem(run, isCurrent) {
         ${count > 0 ? `<ul class="session-topics">${topicHtml}</ul>` : '<p style="color:#6c757d">暂无刷帖记录</p>'}
       </div>
     </div>`;
+}
+
+function getBrowseRunEndText(run) {
+  if (!run.endTime) return '运行中';
+  if (run.status === 'no-more-topics') return `无法加载更多 ${formatDate(run.endTime)}`;
+  if (run.status === 'complete') return `完成 ${formatDate(run.endTime)}`;
+  if (run.status === 'error') return `异常 ${formatDate(run.endTime)}`;
+  return `结束 ${formatDate(run.endTime)}`;
 }
 
 function renderBrowseRunTopic(topic) {

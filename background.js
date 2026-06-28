@@ -15,6 +15,9 @@ const MIN_TOPIC_SCROLL_OBSERVE_MS = 4000;
 const AGENT_FILTER_TIMEOUT_MS = 3000;
 const POST_TOPIC_SUCCESS_DWELL_MIN_MS = 800;
 const POST_TOPIC_SUCCESS_DWELL_MAX_MS = 1800;
+const LOAD_MORE_MAX_ROUNDS = 5;
+const LOAD_MORE_SCROLL_ATTEMPTS_PER_ROUND = 3;
+const NO_MORE_TOPICS_MESSAGE = '已浏览完当前可见帖子，无法加载更多';
 
 const SPEED_CONFIG = {
   1: { minSpeed: 0.2, maxSpeed: 0.8, interval: 80 },
@@ -44,7 +47,10 @@ function createEmptySession() {
     noTopicRetries: 0,
     speedSetting: 2,
     postLimit: 0,
-    totalBrowsed: 0
+    totalBrowsed: 0,
+    topicQueue: [],
+    queuedTopicKeys: new Set(),
+    browsedTopicKeys: new Set()
   };
 }
 
@@ -152,6 +158,22 @@ function samePageUrl(a, b) {
   }
 }
 
+function normalizeUrlWithoutHash(url) {
+  const parsed = new URL(url);
+  const pathname = parsed.pathname.replace(/\/$/, '') || '/';
+  parsed.pathname = pathname;
+  parsed.hash = '';
+  return parsed.href;
+}
+
+function sameUrlWithoutHash(a, b) {
+  try {
+    return normalizeUrlWithoutHash(a) === normalizeUrlWithoutHash(b);
+  } catch {
+    return false;
+  }
+}
+
 function getLinuxDoPath(url) {
   try {
     return new URL(url).pathname.replace(/\/$/, '') || '/';
@@ -171,6 +193,20 @@ function isSameTopicPage(actualUrl, expectedUrl) {
   return Boolean(actualTopicId && expectedTopicId && actualTopicId === expectedTopicId);
 }
 
+function getTopicKey(topicOrHref) {
+  const href = typeof topicOrHref === 'string' ? topicOrHref : topicOrHref?.href;
+  if (!href) return '';
+
+  const topicId = getTopicId(href);
+  if (topicId) return `topic:${topicId}`;
+
+  try {
+    return normalizeUrlWithoutHash(href);
+  } catch {
+    return href;
+  }
+}
+
 function isLoginLikeUrl(url) {
   try {
     const path = new URL(url).pathname;
@@ -188,8 +224,20 @@ function readableDetachReason(reason) {
   return `调试连接已断开：${reason || '未知原因'}`;
 }
 
+function readableError(error, fallback) {
+  return error?.message || String(error || '') || fallback;
+}
+
+function isFatalBrowseError(error) {
+  if (error instanceof StopRequested) return true;
+
+  const message = readableError(error, '');
+  // CDP connection loss is an environment failure, not a recoverable per-topic error.
+  return /请先登录|已离开 linux\.do|被手动导航|调试连接|自动化标签已关闭|debugger|detached|No tab with id/i.test(message);
+}
+
 async function updateStatus(status, data = {}) {
-  const finalState = status === 'complete' || status === 'stopped';
+  const finalState = status === 'complete' || status === 'stopped' || status === 'no-more-topics';
   await storageSet({
     browseStatus: status,
     browseData: data,
@@ -218,6 +266,9 @@ async function startBrowse() {
   session.currentListUrl = LINUXDO_LATEST_URL;
   session.currentTopicIndex = 0;
   session.noTopicRetries = 0;
+  session.topicQueue = [];
+  session.queuedTopicKeys = new Set();
+  session.browsedTopicKeys = new Set();
 
   // Create new agent session for topic recording
   currentAgentSession = createAgentSession();
@@ -515,6 +566,31 @@ async function updateBrowsedTopicStatus(topic, status, error = '') {
   await saveCurrentBrowseRunSnapshot();
 }
 
+async function markTopicError(topic, error) {
+  if (!currentBrowseRunSession) return;
+
+  const message = readableError(error, '帖子浏览失败，已跳过');
+  const record = [...currentBrowseRunSession.topics].reverse()
+    .find((item) => item.href === topic.href);
+
+  if (record) {
+    record.status = 'error';
+    record.error = message;
+    record.completedAt = new Date().toISOString();
+  } else {
+    currentBrowseRunSession.topics.push({
+      title: topic.title,
+      href: topic.href,
+      browsedAt: new Date().toISOString(),
+      status: 'error',
+      error: message,
+      completedAt: new Date().toISOString()
+    });
+  }
+
+  await saveCurrentBrowseRunSnapshot();
+}
+
 async function focusBrowseTab() {
   const tabId = session.tabId || (await storageGet(['browseTabId']).catch(() => ({}))).browseTabId;
   if (!tabId) return { status: 'not-running' };
@@ -571,7 +647,7 @@ async function keepTabFromDiscarding(tabId) {
   }
 }
 
-async function stopSession({ status = 'stopped', error = null, fromDetach = false } = {}) {
+async function stopSession({ status = 'stopped', error = null, fromDetach = false, data = null } = {}) {
   if (stoppingPromise) return stoppingPromise;
 
   stoppingPromise = (async () => {
@@ -608,7 +684,7 @@ async function stopSession({ status = 'stopped', error = null, fromDetach = fals
     currentAgentSession = null;
     await clearCurrentSessionSnapshot();
 
-    await updateStatus(status, error ? { error } : {});
+    await updateStatus(status, data || (error ? { error } : {}));
     resetSession();
   })().finally(() => {
     stoppingPromise = null;
@@ -631,49 +707,26 @@ async function runBrowseSession() {
 
 async function browseCurrentListPage() {
   ensureRunning();
-  await navigateTo(session.currentListUrl);
 
-  const listInfo = await waitForListInfo(session.currentListUrl);
-  if (listInfo.loginRequired || isLoginLikeUrl(listInfo.href)) {
-    throw new Error('请先登录 LinuxDo 后再启动自动浏览');
+  if (session.topicQueue.length === 0) {
+    const hasTopics = await refillTopicQueue();
+    if (!hasTopics) return false;
   }
 
-  if (listInfo.topics.length === 0) {
-    session.noTopicRetries += 1;
-    await updateStatus('no-topics', { error: '未找到帖子，稍后重试' });
-    if (session.noTopicRetries >= MAX_NO_TOPIC_RETRIES) {
-      throw new Error('连续多次未找到帖子，已停止');
-    }
-    await interruptibleDelay(5000, 8000);
-    return true;
-  }
+  const topic = session.topicQueue.shift();
+  session.queuedTopicKeys.delete(getTopicKey(topic));
+  session.currentTopicIndex = session.totalBrowsed;
 
-  session.noTopicRetries = 0;
-
-  if (session.currentTopicIndex >= listInfo.topics.length) {
-    // All topics on this page browsed — try loading more via infinite scroll
-    const loaded = await loadMoreTopics();
-    if (!loaded) {
-      await stopSession({ status: 'complete' });
-      return false;
-    }
-    // Re-navigate to pick up newly loaded topics
-    session.currentTopicIndex = 0;
-    await updateStatus('next-page');
-    await interruptibleDelay(800, 1500);
-    return true;
-  }
-
-  const topic = listInfo.topics[session.currentTopicIndex];
   await updateStatus('browsing', {
-    total: listInfo.topics.length,
+    total: session.totalBrowsed + session.topicQueue.length + 1,
     current: session.currentTopicIndex,
     title: topic.title,
     totalBrowsed: session.totalBrowsed,
     postLimit: session.postLimit
   });
 
-  await browseTopic(topic, listInfo.topics.length);
+  await browseTopic(topic, session.totalBrowsed + session.topicQueue.length + 1);
+  session.browsedTopicKeys.add(getTopicKey(topic));
   session.currentTopicIndex += 1;
   session.totalBrowsed += 1;
 
@@ -698,44 +751,151 @@ async function browseCurrentListPage() {
   return true;
 }
 
+async function refillTopicQueue() {
+  for (let round = 0; round < LOAD_MORE_MAX_ROUNDS; round++) {
+    ensureRunning();
+    await navigateTo(session.currentListUrl);
+
+    let listInfo = await waitForListInfo(session.currentListUrl);
+    if (!await validateListInfoOrRetry(listInfo)) continue;
+
+    if (queueUnseenTopics(listInfo) > 0) {
+      return true;
+    }
+
+    const nextHref = getUsableNextHref(listInfo);
+    if (nextHref) {
+      session.currentListUrl = nextHref;
+      await updateStatus('next-page', {
+        totalBrowsed: session.totalBrowsed,
+        postLimit: session.postLimit
+      });
+      await interruptibleDelay(800, 1500);
+      continue;
+    }
+
+    const loadedInfo = await loadMoreTopics(listInfo);
+    if (!loadedInfo) break;
+
+    listInfo = loadedInfo;
+    if (!await validateListInfoOrRetry(listInfo)) continue;
+    if (queueUnseenTopics(listInfo) > 0) {
+      return true;
+    }
+
+    const loadedNextHref = getUsableNextHref(listInfo);
+    if (loadedNextHref) {
+      session.currentListUrl = loadedNextHref;
+      await updateStatus('next-page', {
+        totalBrowsed: session.totalBrowsed,
+        postLimit: session.postLimit
+      });
+      await interruptibleDelay(800, 1500);
+      continue;
+    }
+
+    break;
+  }
+
+  await stopSession({
+    status: 'no-more-topics',
+    data: { error: NO_MORE_TOPICS_MESSAGE }
+  });
+  return false;
+}
+
+async function validateListInfoOrRetry(listInfo) {
+  if (listInfo.loginRequired || isLoginLikeUrl(listInfo.href)) {
+    throw new Error('请先登录 LinuxDo 后再启动自动浏览');
+  }
+
+  if (listInfo.topics.length > 0) {
+    session.noTopicRetries = 0;
+    return true;
+  }
+
+  session.noTopicRetries += 1;
+  await updateStatus('no-topics', { error: '未找到帖子，稍后重试' });
+  if (session.noTopicRetries >= MAX_NO_TOPIC_RETRIES) {
+    throw new Error('连续多次未找到帖子，已停止');
+  }
+  await interruptibleDelay(5000, 8000);
+  return false;
+}
+
+function queueUnseenTopics(listInfo) {
+  let added = 0;
+  for (const topic of listInfo.topics) {
+    const key = getTopicKey(topic);
+    if (!key || session.browsedTopicKeys.has(key) || session.queuedTopicKeys.has(key)) continue;
+
+    session.topicQueue.push(topic);
+    session.queuedTopicKeys.add(key);
+    added += 1;
+  }
+  return added;
+}
+
+function getUsableNextHref(listInfo) {
+  if (!listInfo.nextHref || !isLinuxDoUrl(listInfo.nextHref)) return null;
+  if (sameUrlWithoutHash(listInfo.nextHref, session.currentListUrl)) return null;
+  return listInfo.nextHref;
+}
+
 async function browseTopic(topic, total) {
   ensureRunning();
 
-  await navigateTo(topic.href);
-  await recordBrowsedTopic(topic);
-  await updateStatus('on-topic', {
-    total,
-    current: session.currentTopicIndex,
-    title: topic.title,
-    totalBrowsed: session.totalBrowsed,
-    postLimit: session.postLimit
-  });
+  try {
+    await navigateTo(topic.href);
+    await recordBrowsedTopic(topic);
+    await updateStatus('on-topic', {
+      total,
+      current: session.currentTopicIndex,
+      title: topic.title,
+      totalBrowsed: session.totalBrowsed,
+      postLimit: session.postLimit
+    });
 
-  const ready = await waitForTopicContent(topic.href);
-  if (!ready) {
-    await updateBrowsedTopicStatus(topic, 'error', '帖子内容加载超时，已跳过');
+    const ready = await waitForTopicContent(topic.href);
+    if (!ready) {
+      await updateBrowsedTopicStatus(topic, 'error', '帖子内容加载超时，已跳过');
+      await updateStatus('topic-error', {
+        total,
+        current: session.currentTopicIndex,
+        title: topic.title,
+        error: '帖子内容加载超时，已跳过',
+        totalBrowsed: session.totalBrowsed,
+        postLimit: session.postLimit
+      });
+      await interruptibleDelay(500, 1000);
+      return;
+    }
+
+    await interruptibleDelay(800, 1500);
+    await ensureExpectedLocation(topic.href);
+    await evaluateInPage(() => {
+      window.scrollTo(0, 0);
+      return true;
+    });
+    await interruptibleDelay(400, 900);
+    await autoScrollTopic(topic.href);
+    await interruptibleDelay(POST_TOPIC_SUCCESS_DWELL_MIN_MS, POST_TOPIC_SUCCESS_DWELL_MAX_MS);
+    await updateBrowsedTopicStatus(topic, 'success');
+  } catch (err) {
+    if (isFatalBrowseError(err)) throw err;
+
+    const message = readableError(err, '帖子浏览失败，已跳过');
+    await markTopicError(topic, message);
     await updateStatus('topic-error', {
       total,
       current: session.currentTopicIndex,
       title: topic.title,
-      error: '帖子内容加载超时，已跳过',
+      error: message,
       totalBrowsed: session.totalBrowsed,
       postLimit: session.postLimit
     });
     await interruptibleDelay(500, 1000);
-    return;
   }
-
-  await interruptibleDelay(800, 1500);
-  await ensureExpectedLocation(topic.href);
-  await evaluateInPage(() => {
-    window.scrollTo(0, 0);
-    return true;
-  });
-  await interruptibleDelay(400, 900);
-  await autoScrollTopic(topic.href);
-  await interruptibleDelay(POST_TOPIC_SUCCESS_DWELL_MIN_MS, POST_TOPIC_SUCCESS_DWELL_MAX_MS);
-  await updateBrowsedTopicStatus(topic, 'success');
 }
 
 async function navigateTo(url) {
@@ -784,35 +944,85 @@ function documentLooksLoaded(info) {
   return info.readyState === 'complete' && info.listReady;
 }
 
-async function loadMoreTopics() {
-  // Scroll to the bottom to trigger Discourse's infinite scroll
-  const initialCount = await evaluateInPage(() => {
-    return document.querySelectorAll('.topic-list-item').length;
+async function loadMoreTopics(initialInfo) {
+  const initialTopicKeys = new Set(initialInfo.topics.map(getTopicKey).filter(Boolean));
+
+  await updateStatus('next-page', {
+    totalBrowsed: session.totalBrowsed,
+    postLimit: session.postLimit
   });
 
-  // Try scrolling to the bottom multiple times to trigger lazy-load
-  for (let attempt = 0; attempt < 10; attempt++) {
-    ensureRunning();
+  for (let round = 0; round < LOAD_MORE_MAX_ROUNDS; round++) {
+    for (let attempt = 0; attempt < LOAD_MORE_SCROLL_ATTEMPTS_PER_ROUND; attempt++) {
+      ensureRunning();
 
-    await evaluateInPage(() => {
-      window.scrollTo(0, document.documentElement.scrollHeight);
-      // Also try clicking the "Load More" button if it exists
-      const btn = document.querySelector('.load-more button, .load-more a');
-      if (btn) btn.click();
-    });
+      await triggerDiscourseLoadMore();
+      await interruptibleDelay(1200, 2200);
 
-    await interruptibleDelay(1500, 2500);
+      const listInfo = await collectListInfo();
+      if (listInfo.loginRequired || isLoginLikeUrl(listInfo.href)) {
+        throw new Error('请先登录 LinuxDo 后再启动自动浏览');
+      }
 
-    const newCount = await evaluateInPage(() => {
-      return document.querySelectorAll('.topic-list-item').length;
-    });
+      const hasNewTopic = listInfo.topics.some((topic) => {
+        const key = getTopicKey(topic);
+        return key && !initialTopicKeys.has(key) && !session.browsedTopicKeys.has(key);
+      });
+      const nextHref = getUsableNextHref(listInfo);
+      const hasNewNextPage = nextHref && nextHref !== getUsableNextHref(initialInfo);
 
-    if (newCount > initialCount) {
-      return true;
+      if (hasNewTopic || hasNewNextPage) {
+        return listInfo;
+      }
     }
+
+    await interruptibleDelay(800, 1600);
   }
 
-  return false;
+  return null;
+}
+
+async function triggerDiscourseLoadMore() {
+  await evaluateInPage(() => {
+    const scrollTargets = [
+      document.scrollingElement,
+      document.documentElement,
+      document.body,
+      document.querySelector('#main-outlet'),
+      document.querySelector('#list-area'),
+      document.querySelector('.contents'),
+      document.querySelector('.topic-list')
+    ].filter(Boolean);
+
+    for (const target of scrollTargets) {
+      const maxTop = Math.max(target.scrollHeight || 0, target.clientHeight || 0);
+      if (typeof target.scrollTo === 'function') {
+        target.scrollTo(0, maxTop);
+      } else {
+        target.scrollTop = maxTop;
+      }
+    }
+
+    window.scrollTo(0, Math.max(
+      document.documentElement ? document.documentElement.scrollHeight : 0,
+      document.body ? document.body.scrollHeight : 0
+    ));
+
+    const clickable = document.querySelector(
+      [
+        '.load-more button',
+        '.load-more a',
+        '.load-more',
+        '.show-more button',
+        '.show-more a',
+        'button[aria-label*="more" i]',
+        'a[aria-label*="more" i]'
+      ].join(',')
+    );
+    if (clickable && typeof clickable.click === 'function') {
+      clickable.click();
+    }
+  });
 }
 
 async function collectListInfo() {
@@ -888,7 +1098,7 @@ async function waitForTopicContent(expectedUrl) {
     return null;
   }, TOPIC_CONTENT_TIMEOUT_MS, TOPIC_READY_POLL_MS, '等待帖子内容超时').catch((err) => {
     if (err instanceof StopRequested) throw err;
-    if (/自动化标签|请先登录|已离开 linux\.do/.test(err.message || '')) throw err;
+    if (isFatalBrowseError(err)) throw err;
     return { ready: false, loginRequired: false };
   });
 
@@ -1115,7 +1325,7 @@ async function waitUntil(check, timeout, interval, timeoutMessage) {
       if (result) return result;
     } catch (err) {
       if (err instanceof StopRequested) throw err;
-      if (/自动化标签|请先登录|已离开 linux\.do/.test(err.message || '')) throw err;
+      if (isFatalBrowseError(err)) throw err;
       lastError = err;
     }
 
